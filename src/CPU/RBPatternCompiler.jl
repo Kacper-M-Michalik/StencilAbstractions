@@ -1,0 +1,1 @@
+# modification of spatial compiler, durign loop jsut add if (i+j %) check
