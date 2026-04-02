@@ -1,14 +1,16 @@
-function gen_jacobi_kernel(expr, spec::StencilSpecification, cursor_symbol::Symbol)
+function gen_kernel(expr, spec::StencilSpecification{CartesianGrid, B, D}, output_symbols::Array{Symbol}, cursor_symbol::Symbol, access_check::Bool, symbol_replacement::Dict{Symbol, Symbol}) where {B, D}
     if !(expr isa Expr)
         return Any[expr]
     end
     
+    # TODO: @returns
+
     # Replace return with output array write and early return
     if (expr.head === :return)        
         @assert length(expr.args) == 1
-        
-        #TODO: Find correct output if return is multi arg
-        assign_ref = Expr(:ref, stencil.output_grids[1], cursor_symbol)
+     
+        #TODO: Copy into multiple arrays if one return and multiple outputs
+        assign_ref = Expr(:ref, output_symbols[1], cursor_symbol)
         @assert length(assign_ref.args) == 2
         
         assign_line = Expr(:(=), assign_ref) 
@@ -17,7 +19,7 @@ function gen_jacobi_kernel(expr, spec::StencilSpecification, cursor_symbol::Symb
         rhs_old = expr.args[1]
         if (rhs_old !== nothing)
             if (rhs_old isa Expr)
-                rhs = gen_jacobi_kernel(rhs_old, spec, cursor_symbol)
+                rhs = gen_kernel(rhs_old, spec, output_symbols, cursor_symbol, access_check, symbol_replacement)
                 @assert length(rhs) == 1
                 push!(assign_line.args, rhs[1]) 
             else
@@ -28,13 +30,23 @@ function gen_jacobi_kernel(expr, spec::StencilSpecification, cursor_symbol::Symb
         
         return Any[_KERNEL_GOTO]     
 
-    # Modify array ref with appropriate bounds checked access
-    elseif (expr.head === :ref)        
-        # TODO, only apply to refs in input arg symbols
+    # Modify array ref with appropriate access
+    elseif (expr.head === :ref && expr.args[1] in spec.stencil.input_symbols)        
         symbol = expr.args[1]
         indices = expr.args[2:end]
         offset = :($cursor_symbol + CartesianIndex($(indices...)))                
-        ref_new = Expr(:ref, symbol, offset)
+        
+        if (haskey(symbol_replacement, symbol)) 
+           symbol = symbol_replacement[symbol]
+        end
+
+        local ref_new
+        if (access_check)
+            # Bounds checked
+            ref_new = _perform_gather(symbol, offset, spec.boundary)   
+        else
+            ref_new = Expr(:ref, symbol, offset)
+        end
 
         return Any[ref_new]
     
@@ -42,7 +54,7 @@ function gen_jacobi_kernel(expr, spec::StencilSpecification, cursor_symbol::Symb
     else  
         new_expr = Expr(expr.head)
         for line in expr.args
-            new_lines = gen_jacobi_kernel(line, spec, cursor_symbol)
+            new_lines = gen_kernel(line, spec, output_symbols, cursor_symbol, access_check, symbol_replacement)
             for new_line in new_lines
                 push!(new_expr.args, new_line)
             end            

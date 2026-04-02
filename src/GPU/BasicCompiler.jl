@@ -1,84 +1,121 @@
 # Stencil transformations are performed here:
 # 1. Replace returns
 # 2. Replace input refs
-# 3. Generate distribution/dispathc methods
-#, lower_corner::NTuple{N, Int}=(), upper_corner::NTuple{N, Int}=()) where N
-
-function compile_stencil(spec::StencilSpecification) 
+# 3. Generate distribution/dispatch methods
+# Block size is used not tile size in this basic compiler
+function compile_stencil(spec::StencilSpecification{CartesianGrid, B, D}) where {B, D <: KernelAbstractions.GPU}
     @assert spec.settings.warp_size == 32 || spec.settings.warp_size == 64
-    #@assert spec.settings.tile_size == spec.settings.block_size
-    # TODO max sure this holds true?
 
     # Generate hygenic symbols for kernel function name, etc.
-    kernel_name = gensym(Symbol(stencil.name, "!"))
-    caller_name = gensym(kernel_name, "_caller")
+    kernel_name = gensym(Symbol(spec.stencil.name, "!"))
+    caller_name = gensym(Symbol(kernel_name, "_caller"))
     cursor_symbol = gensym(Symbol("cursor"))
-    id_symbol = gensym(Symbol("id"))
+    first_grid_index = spec.stencil.first_grid_index
 
     # Mark kernel args as constant for KernelAbstractions
-    # TODO: allow typing, insert missing outputs
     wrapped_args = Any[]
-    for arg in stencil.args
-        if (haskey(stencil.sources, arg))
-            push!(wrapped_args, Expr(:macrocall, Symbol("@Const"), nothing, arg))
+    for arg in spec.stencil.args
+        if (arg[1] in spec.stencil.input_symbols)           
+            push!(wrapped_args, Expr(:macrocall, Symbol("@Const"), nothing, arg[1]))
+        elseif (!(arg[2] in spec.stencil.output_symbols) && arg[2] !== nothing)
+            push!(wrapped_args, Expr(Symbol("::"), arg[1], arg[2]))
         else
-            push!(wrapped_args, arg)
+            push!(wrapped_args, arg[1])            
         end
     end    
     
-    # Compile kernel    
-    transformed_body::Expr = gen_jacobi_kernel(spec, cursor_symbol)
+    output_args = copy(spec.stencil.output_symbols)    
+    while length(output_args) < spec.stencil.required_outputs || length(output_args) < 1
+        output_symbol = gensym(Symbol("output"))
+        push!(output_args, output_symbol)
+        push!(wrapped_args, output_symbol)
+    end
 
-    # TODO: Fastmath, inbounds conditional #unsafe_indices=true
+    if (first_grid_index == 0)
+        first_grid_index = length(wrapped_args)
+    end
+
+    # Compile kernel body    
+    body_array = gen_kernel(spec.stencil.body, spec, output_args, cursor_symbol, !spec.structure.halo, Dict{Symbol, Symbol}())
+    @assert length(body_array) == 1
+    body::Expr = body_array[1]
+
+    # TODO: Fastmath, inbounds
     # Generate kernel, eval into function table, last line returns specialised KernelAbstractions callable struct
     generated_kernel = quote
-        @kernel function $(kernel_name)($(wrapped_args...), $_LOWER_BOUND, $_UPPER_BOUND)        
+        @kernel unsafe_indices=true function $(kernel_name)($(wrapped_args...), $_LOWER_BOUND, $_UPPER_BOUND)        
             $cursor_symbol = @index(Global, Cartesian)      
-            $cursor_symbol += $_LOWER_BOUND
-
-            if (all(($cursor_symbol).I .<= $_UPPER_BOUND))
-                $(transformed_body.args...)               
+            $cursor_symbol += CartesianIndex($_LOWER_BOUND)
+            
+            if (all(($cursor_symbol).I .<= $_UPPER_BOUND))               
+                $(body.args...)               
             end 
             $_KERNEL_END
-
         end
-        $(kernel_name)($(spec.backend), $(spec.settings.tile_size))
+        $(kernel_name)($(spec.device), $(spec.settings.block_size))
     end
     specialised_kernel_ptr = eval(generated_kernel)
-
-    # TODO: Add actual size checks?
-    kernel_caller = quote
-        function $(caller_name)(args...; lower_corner=(), upper_corner=())     
-                # TODO -> use output array, from it you can read size w/ padding and true size
-                # alloc gets maximal bounds, then max with tile size (if enabled)
-
-            if length(lower_corner) != 0
-                @assert length(lower_corner) == $(spec.stencil.dimensions)
-            else
-                lower_corner = ntuple(i -> 0, $(spec.stencil.dimensions))
-            end 
-            lower_corner = lower_corner .+ bulk_start_index
-
-            if length(upper_corner) != 0
-                @assert length(lower_corner) == $(spec.stencil.dimensions)
-            else
-                upper_corner = size($()) .- bulk_end_index
-            end           
-
-            tile_count = cld.((upper_corner .- lower_corner), $(spec.settings.tile_size))  
-            $(specialised_kernel_ptr)(args..., lower_corner, upper_corner; ndrange=tile_count)  
-        end
-    end
-    caller_ptr = eval(kernel_caller)
     
-    print("\n\nGenerated kernel:\n")
-    print(generated_kernel)
-    print("\nCaller:\n")
-    print(kernel_caller)
-    print("\n")
+    lower_offset = GetHaloLowerOffset(spec)
+    upper_offset = GetHaloUpperOffset(spec)
 
-    return caller_ptr
+    # Generate the dispatcher function
+    # Kernel abstractions automatically calculates the requried number of tiles
+    local kernel_caller
+    if (spec.structure.halo)
+        kernel_caller = quote
+            function $(caller_name)(args...; lower=(), upper=())     
+                local offset
+                if length(lower) != 0
+                    @assert length(lower) == $(spec.stencil.dimensions)
+                    offset = lower .+ $(lower_offset) .- 1
+                else
+                    offset = $(lower_offset)
+                end 
 
-    # specialised_kernel_ptr = eval(generated_kernel)
-    # return CompiledStencil(specialised_kernel_ptr, settings)
+                if length(upper) != 0
+                    # TODO: Add actual size checks?
+                    @assert length(upper) == $(spec.stencil.dimensions)
+                    upper = upper .+ $(lower_offset)
+                else
+                    upper = size(args[$(first_grid_index)]) .- $(upper_offset)                    
+                end          
+                
+                range = (upper .- offset)
+                $(specialised_kernel_ptr)(args..., offset, upper; ndrange=range)  
+            end
+        end
+    else
+        kernel_caller = quote
+            function $(caller_name)(args...; lower=(), upper=())     
+                local offset
+                if length(lower) != 0
+                    @assert length(lower) == $(spec.stencil.dimensions)
+                    offset = lower .- 1
+                else
+                    offset = ntuple(val -> 0, $(spec.stencil.dimensions))
+                end 
+
+                if length(upper) != 0
+                    # TODO: Add actual size checks?
+                    @assert length(upper) == $(spec.stencil.dimensions)
+                else
+                    upper = size(args[$(first_grid_index)])
+                end          
+                
+                range = (upper .- offset)
+                $(specialised_kernel_ptr)(args..., offset, upper; ndrange=range)  
+            end
+        end
+    end    
+    
+    # print("\n\nGenerated kernel: ")
+    # print(kernel_name)
+    # print("\n")
+    # print(generated_kernel)
+    # print("\nCaller:\n")
+    # print(kernel_caller)
+    # print("\n")
+
+    return eval(kernel_caller)
 end

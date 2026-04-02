@@ -14,3 +14,31 @@ function GetMaximalHaloSizes(spec::StencilSpecification)
 
     return halos
 end
+
+function GetHaloLowerOffset(spec::StencilSpecification)
+    offset = zeros(Int, spec.stencil.dimensions)
+
+    for source in values(spec.stencil.sources)
+        for (i, radius) in enumerate(source.radii)
+            if radius.min < offset[i]
+                offset[i] = -radius.min
+            end
+        end
+    end
+
+    return Tuple(offset)
+end
+
+function GetHaloUpperOffset(spec::StencilSpecification)
+    offset = zeros(Int, spec.stencil.dimensions)
+
+    for source in values(spec.stencil.sources)
+        for (i, radius) in enumerate(source.radii)
+            if radius.max > offset[i]
+                offset[i] = radius.max
+            end
+        end
+    end
+
+    return Tuple(offset)
+end

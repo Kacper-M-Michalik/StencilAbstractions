@@ -21,13 +21,13 @@ using .StencilAbstractions
         else return 1
         end
     else
-        if (local_val == 3) return 1 
+        if (local_val == 3) return 1
         else return 0
         end
     end
 end
 
-conway_spec = StencilSpecification(conway, CartesianGrid(), DefaultValue{Int32}(0), CUDABackend(), OptimisationSettings(compiler=BasicGPU()))
+conway_spec = StencilSpecification(conway, CartesianGrid(false), DefaultValue{Int32}(0), CPUBackend(), OptimisationSettings(compiler=BasicGPU()))
 
 arr = Int32[0 1 0 1
             0 0 1 1
@@ -36,16 +36,21 @@ arr = Int32[0 1 0 1
 
 # In, Out are both buffers allocated on the correct device with appropriate padding
 in = alloc(conway_spec, arr)
-out = alloc(conway_spec, eltype(arr), size(arr))
+out = zeros(conway_spec, eltype(arr), size(arr))
 
 kernel = compile_stencil(conway_spec)
 
-# Allow views to be run in range, and a default range which covers grid
+print(in)
+print("\n")
+print(out)
+print("\n")
+
+# Call kernel, can be run over a specific area by specifying lower and upper
 kernel(in, out)
 
-#kernel(in, out; range = size(in))
-
 print(in)
+print("\n")
 print(out)
+print("\n")
 
 end

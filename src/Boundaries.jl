@@ -1,3 +1,10 @@
+# todo, edge kernels
+# on alloc we apply edge? or before iter -> before leave invalid boundary
+#
+
+
+
+
 
 @inline Base.@propagate_inbounds function _get_const(grid, index, value)
     if checkbounds(Bool, grid, index)

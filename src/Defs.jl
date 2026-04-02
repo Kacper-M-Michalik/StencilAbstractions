@@ -22,7 +22,6 @@ struct DiamondCPU <: CPUStrategy end
 struct CandyCPU <: CPUStrategy end
 
 struct BasicGPU <: GPUStrategy end
-struct SpatialGPU <: GPUStrategy end
 struct GatherGPU <: GPUStrategy end
 struct OverlappedGPU <: GPUStrategy 
     timesteps::Int32
@@ -40,9 +39,9 @@ Base.@kwdef struct OptimisationSettings
     compiler::ComputationStrategy = BasicCPU()
     enable_fastmath::Bool = false
     enable_bounds_checks::Bool = false
-    tile_size = (0)
+    tile_size = (32, 32)
     # GPU Only
-    block_size = (16, 16)
+    block_size = (32, 16)
     warp_size = 32    
     # CPU Only
     thread_count = 4    
@@ -62,11 +61,13 @@ end
 struct StencilEquation
     name::Symbol
     args::Array{Tuple{Symbol, Union{Symbol, Nothing}}}
-    input_grids::Array{Symbol}
-    explicit_output_grids::Array{Symbol}
     body::Expr
+    input_symbols::Array{Symbol} 
+    output_symbols::Array{Symbol}   
+    required_outputs::Int64
+    first_grid_index::Int64
+    sources::Dict{Symbol, StencilSource}   
     dimensions::Int64
-    sources::Dict{Symbol, StencilSource}
 end
 
 struct StencilSpecification{G <: Structure, B <: BoundaryType, D <: KernelAbstractions.Backend}
@@ -90,6 +91,6 @@ end
 
 const _KERNEL_END = Expr(:macrocall, Symbol("@label"), nothing, Symbol("kernel_end"))
 const _KERNEL_GOTO = Expr(:macrocall, Symbol("@goto"), nothing, Symbol("kernel_end"))
-const _SIZE_SYMBOL = Symbol("ndrange")
-const _UPPER_BOUND = Symbol("LOWER")
-const _LOWER_BOUND = Symbol("UPPER")
+const _SIZE_SYMBOL = Symbol("_RANGE")
+const _UPPER_BOUND = Symbol("_UPPER")
+const _LOWER_BOUND = Symbol("_LOWER")
