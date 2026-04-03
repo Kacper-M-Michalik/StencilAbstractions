@@ -1,5 +1,5 @@
 # Basic method does dispatch in rectangles
-function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbstractions.CPU}) where {B}
+function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbstractions.CPU, BasicSettings}) where {B}
     @assert spec.settings.thread_count > 0
 
     # Generate hygenic symbols for kernel function name, etc.
@@ -155,5 +155,5 @@ function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbst
     # print(kernel_caller)
     # print("\n")
 
-    return eval(kernel_caller)
+    return CompiledStencil(eval(kernel_caller), spec)
 end

@@ -1,8 +1,4 @@
 const CPUBackend = KernelAbstractions.CPU
-# const CUDABackend = CUDA.CUDABackend
-# const ROCBackend = AMDGPU.ROCBackend
-# const MetalBackend = Metal.MetalBackend
-# const oneAPIBackend = oneAPI.oneAPIBackend
 
 abstract type BoundaryType end
 struct DefaultValue{T} <: BoundaryType 
@@ -11,40 +7,50 @@ end
 struct WrapAround <: BoundaryType end
 struct Mirror <: BoundaryType end
 struct MirrorWithBounce <: BoundaryType end
+struct None <: BoundaryType end
 
-# TODO: change to jsut basic, etc., then do check to block overlapped on cpu for example
-abstract type ComputationStrategy end
-abstract type CPUStrategy <: ComputationStrategy end
-abstract type GPUStrategy <: ComputationStrategy end
-struct BasicCPU <: CPUStrategy end
-struct SpatialCPU <: CPUStrategy end
-struct DiamondCPU <: CPUStrategy end
-struct CandyCPU <: CPUStrategy end
-
-struct BasicGPU <: GPUStrategy end
-struct GatherGPU <: GPUStrategy end
-struct OverlappedGPU <: GPUStrategy 
-    timesteps::Int32
-end
-
-# May have to change from KA, need to discrimiante bwteen CUDA and ROC etc.
 abstract type Structure end
 Base.@kwdef struct CartesianGrid <: Structure 
     halo::Bool = true
 end
 struct TreeGrid <: Structure end
 
-Base.@kwdef struct OptimisationSettings    
-    # Shared 
-    compiler::ComputationStrategy = BasicCPU()
+abstract type ComputationSettings end
+Base.@kwdef struct BasicSettings <: ComputationSettings
     enable_fastmath::Bool = false
-    enable_bounds_checks::Bool = false
-    tile_size = (32, 32)
+    enable_bounds_checks::Bool = false    
     # GPU Only
     block_size = (32, 16)
-    warp_size = 32    
     # CPU Only
     thread_count = 4    
+end
+
+Base.@kwdef struct SpatialSettings <: ComputationSettings
+    enable_fastmath::Bool = false
+    enable_bounds_checks::Bool = false    
+    tile_size = (32, 32)
+    thread_count = 4    
+end
+
+Base.@kwdef struct DiamondSettings <: ComputationSettings
+end
+
+Base.@kwdef struct CandySettings <: ComputationSettings
+end
+
+Base.@kwdef struct GatherSettings <: ComputationSettings
+    enable_fastmath::Bool = false
+    enable_bounds_checks::Bool = false    
+    tile_size = (32, 32)
+    block_size = (256)
+end
+
+Base.@kwdef struct OverlappedSettings <: ComputationSettings
+    enable_fastmath::Bool = false
+    enable_bounds_checks::Bool = false    
+    tile_size = (32, 32)
+    block_size = (256)
+    timesteps::Int64 = 2 
 end
 
 Base.@kwdef mutable struct StencilDimension
@@ -70,18 +76,18 @@ struct StencilEquation
     dimensions::Int64
 end
 
-struct StencilSpecification{G <: Structure, B <: BoundaryType, D <: KernelAbstractions.Backend}
+struct StencilSpecification{G <: Structure, B <: BoundaryType, D <: KernelAbstractions.Backend, S <: ComputationSettings}
     stencil::StencilEquation
     structure::G
     boundary::B
     device::D
-    settings::OptimisationSettings
+    settings::S
 end
-StencilSpecification(s, g, b, d) = StencilSpecification(s, g, b, d, OptimisationSettings())
+StencilSpecification(s, g, b, d) = StencilSpecification(s, g, b, d, BasicSettings())
 
 struct CompiledStencil
-    kernel_pointer
-    settings::Structure
+    kernel
+    settings::StencilSpecification
 end
 
 struct TranslationLine

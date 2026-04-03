@@ -1,5 +1,5 @@
-# Spatial method does dispatch in tiles
-function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbstractions.CPU}) where {B}
+# Dispatch in tiles
+function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbstractions.CPU, SpatialSettings}) where {B}
     @assert spec.settings.thread_count > 0
 
     # Generate hygenic symbols for kernel function name, etc.
@@ -87,7 +87,8 @@ function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbst
                     $(rng_high) = min($(rng_low)+$(step)-1, $(_UPPER_BOUND)[1])
                     $(start_index) = CartesianIndex($(rng_low), $(lower_access...))
                     $(end_index) = CartesianIndex($(rng_high), $(upper_access...))
-
+                    
+                    
                     # Main loops
                     $(main_loops)
                 end

@@ -1,17 +1,15 @@
 module StencilAbstractions
 
 using DataStructures
-using StaticArrays
 using KernelAbstractions
-using LoopVectorization
 
 export
     @stencil, @Input, @Output, @returns,
-    StencilSpecification, OptimisationSettings, StencilEquation, alloc, compile_stencil,
+    StencilSpecification, StencilEquation, alloc, compile_stencil,
     CPUBackend,
     CartesianGrid, TreeGrid, 
-    GridBoundary, DefaultValue, WrapAround, Mirror, MirrorWithBounce, 
-    BasicCPU, SpatialCPU, DiamondCPU, CandyCPU, BasicGPU, GatherGPU, OverlappedGPU
+    GridBoundary, DefaultValue, WrapAround, Mirror, MirrorWithBounce, None,
+    BasicSettings, SpatialSettings, DiamondSettings, CandySettings, GatherSettings, OverlappedSettings
     
 include("Defs.jl")
 include("Helpers.jl")
@@ -50,28 +48,9 @@ macro returns(expr)
     return esc(expr)
 end
 
-# TODO: Return views too
 function alloc(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, type, arr_size) 
     @assert length(arr_size) == spec.stencil.dimensions    
-    true_size = arr_size
-    if spec.structure.halo
-        halos = GetMaximalHaloSizes(spec)
-        temp = Vector{Int}(undef, length(arr_size))
-        for (i, radius) in enumerate(halos)
-            temp[i] = arr_size[i] - radius.min + radius.max
-        end
-        true_size = Tuple(temp)
-    end
 
-    device_array = KernelAbstractions.allocate(spec.device, type, true_size) 
-    return device_array
-end
-
-function alloc(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, array::AbstractArray)    
-    arr_size = size(array)
-    @assert length(arr_size) == spec.stencil.dimensions 
-
-    local device_array    
     if spec.structure.halo
         halos = GetMaximalHaloSizes(spec)
         temp = Vector{Int}(undef, length(arr_size))
@@ -81,24 +60,44 @@ function alloc(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, array:
             offset[i] = 1 - radius.min
         end
         true_size = Tuple(temp)
-        device_array = KernelAbstractions.zeros(spec.device, eltype(array), true_size)
-
         lower_corner = Tuple(offset)      
         upper_corner = lower_corner .+ arr_size .- 1     
         ranges = UnitRange.(Tuple(lower_corner), upper_corner) 
+      
+        device_array = KernelAbstractions.allocate(spec.device, type, true_size) 
+        data = view(device_array, ranges...)
+        return device_array, data
+    else
+        device_array = KernelAbstractions.allocate(spec.device, type, arr_size) 
+        return device_array, view(device_array, axes(device_array)...)
+    end
+end
 
-        # print(lower_corner)
-        # print(upper_corner)
-        # print(ranges)
-        # print(arr_size)        
-        # print(true_size)        
+function alloc(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, array::AbstractArray)    
+    arr_size = size(array)
+    @assert length(arr_size) == spec.stencil.dimensions 
+
+    if spec.structure.halo
+        halos = GetMaximalHaloSizes(spec)
+        temp = Vector{Int}(undef, length(arr_size))
+        offset = Vector{Int}(undef, length(arr_size))
+        for (i, radius) in enumerate(halos)
+            temp[i] = arr_size[i] - radius.min + radius.max
+            offset[i] = 1 - radius.min
+        end
+        true_size = Tuple(temp)
+        lower_corner = Tuple(offset)      
+        upper_corner = lower_corner .+ arr_size .- 1     
+        ranges = UnitRange.(Tuple(lower_corner), upper_corner) 
+      
+        device_array = KernelAbstractions.zeros(spec.device, eltype(array), true_size)
         dest = view(device_array, ranges...)
-        # print("\n")
-        # print(dest)
-        copyto!(dest, array)        
+        copyto!(dest, array)       
+        return device_array, dest 
     else
         device_array = KernelAbstractions.allocate(spec.device, eltype(array), arr_size)
         copyto!(device_array, array)
+        return device_array, view(device_array, axes(device_array)...)
     end
 
     return device_array
@@ -106,18 +105,31 @@ end
 
 function Base.zeros(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, type, arr_size) 
     @assert length(arr_size) == spec.stencil.dimensions    
-    true_size = arr_size
+   
     if spec.structure.halo
         halos = GetMaximalHaloSizes(spec)
         temp = Vector{Int}(undef, length(arr_size))
+        offset = Vector{Int}(undef, length(arr_size))
         for (i, radius) in enumerate(halos)
             temp[i] = arr_size[i] - radius.min + radius.max
+            offset[i] = 1 - radius.min
         end
         true_size = Tuple(temp)
+        lower_corner = Tuple(offset)      
+        upper_corner = lower_corner .+ arr_size .- 1     
+        ranges = UnitRange.(Tuple(lower_corner), upper_corner) 
+      
+        device_array = KernelAbstractions.zeros(spec.device, type, true_size) 
+        data = view(device_array, ranges...)
+        return device_array, data
+    else
+        device_array = KernelAbstractions.zeros(spec.device, type, arr_size) 
+        return device_array, view(device_array, axes(device_array)...)
     end
+end
 
-    device_array = KernelAbstractions.zeros(spec.device, type, true_size) 
-    return device_array
+function (stencil::CompiledStencil)(args...; lower=(), upper=())
+    stencil.kernel(args...; lower = lower, upper = upper)
 end
 
 end

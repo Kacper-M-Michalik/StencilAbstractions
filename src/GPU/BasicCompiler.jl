@@ -2,9 +2,7 @@
 # 1. Replace returns
 # 2. Replace input refs
 # 3. Generate distribution/dispatch methods
-# Block size is used not tile size in this basic compiler
-function compile_stencil(spec::StencilSpecification{CartesianGrid, B, D}) where {B, D <: KernelAbstractions.GPU}
-    @assert spec.settings.warp_size == 32 || spec.settings.warp_size == 64
+function compile_stencil(spec::StencilSpecification{CartesianGrid, B, D, BasicSettings}) where {B, D <: KernelAbstractions.GPU}
 
     # Generate hygenic symbols for kernel function name, etc.
     kernel_name = gensym(Symbol(spec.stencil.name, "!"))
@@ -117,5 +115,5 @@ function compile_stencil(spec::StencilSpecification{CartesianGrid, B, D}) where 
     # print(kernel_caller)
     # print("\n")
 
-    return eval(kernel_caller)
+    return CompiledStencil(eval(kernel_caller), spec)
 end

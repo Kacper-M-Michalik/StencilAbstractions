@@ -1,4 +1,15 @@
+authors = ["BGN: TODO"]
 name = "StencilAbstractions"
 uuid = "f78e58d0-a86d-473a-8ba8-1812b7e1db75"
 version = "0.1.0"
-authors = ["BGN: TODO"]
+
+[compat]
+DataStructures = "0.19.4"
+KernelAbstractions = "0.9.41"
+
+[deps]
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+
+[extras]
+CUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"
