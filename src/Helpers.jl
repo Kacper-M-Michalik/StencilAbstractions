@@ -20,7 +20,7 @@ function GetHaloLowerOffset(spec::StencilSpecification)
 
     for source in values(spec.stencil.sources)
         for (i, radius) in enumerate(source.radii)
-            if radius.min < offset[i]
+            if -radius.min > offset[i]
                 offset[i] = -radius.min
             end
         end

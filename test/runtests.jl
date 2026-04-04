@@ -1,19 +1,25 @@
 module StencilTests
 
-using Pkg
-Pkg.activate(joinpath(@__DIR__, ".."))
-using StencilAbstractions
+# using Pkg
+# Pkg.activate(joinpath(@__DIR__, ".."))
+# using StencilAbstractions
 using KernelAbstractions
-using CUDA
-using CUDA.CUDAKernels
+# using CUDA
+# using CUDA.CUDAKernels
 
-# Make sure all operations are being properly compiled for GPU
-CUDA.allowscalar(false)
-CUDA.set_runtime_version!(v"12.6")
+# Temp
+include("./../src/StencilAbstractions.jl")
+using .StencilAbstractions
 
+# # Make sure all operations are being properly compiled for GPU
+# CUDA.allowscalar(false)
+# CUDA.set_runtime_version!(v"12.6")
+
+
+const one = 1
 @stencil function conway(@Input(A)) 
     local_val::Int32 = (A[-1, -1] + A[-1, 0] + A[-1, 1] + A[0, -1] + A[0, 1] + A[1, -1] + A[1, 0] + A[1, 1])
-    if (A[0, 0] == 1)
+    if (A[0, 0] == one)
         if (local_val < 2 || local_val > 3) return 0 
         else return 1
         end
@@ -24,7 +30,7 @@ CUDA.set_runtime_version!(v"12.6")
     end
 end
 
-conway_spec = StencilSpecification(conway, CartesianGrid(), DefaultValue{Int32}(0), CPUBackend(), BasicSettings())
+conway_spec = StencilSpecification(conway, CartesianGrid(), DefaultValue{Int32}(0), CPUBackend(), SpatialSettings())
 
 arr = Int32[0 1 0 1
             0 0 1 1
@@ -32,8 +38,8 @@ arr = Int32[0 1 0 1
             0 0 0 0]
 
 # In, Out are both buffers allocated on the correct device with appropriate padding, with views poiinting to the inner data only if halos are enabled
-in, in_view = alloc(conway_spec, arr)
-out, out_view = zeros(conway_spec, eltype(arr), size(arr))
+in, in_view = alloc(conway_spec, arr) #alloc(conway_spec, arr)
+out, out_view = zeros(conway_spec, eltype(arr), size(in_view))
 
 kernel = compile_stencil(conway_spec)
 

@@ -33,8 +33,17 @@ function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbst
         first_grid_index = length(kernel_args)
     end
         
+    # Add aliasing hints
+    const_inputs = Expr(:block)
+    const_replacements = Dict{Symbol, Symbol}()
+    for arg in spec.stencil.input_symbols
+        const_name = gensym(arg)
+        const_replacements[arg] = const_name
+        push!(const_inputs.args, :($(const_name) = Base.Experimental.Const($(arg))))
+    end
+
     # Compile kernel body    
-    body_array = gen_kernel(spec.stencil.body, spec, output_args, cursor_symbol, !spec.structure.halo, Dict{Symbol, Symbol}())
+    body_array = gen_kernel(spec.stencil.body, spec, output_args, cursor_symbol, !spec.structure.halo, const_replacements)
     @assert length(body_array) == 1
     body::Expr = body_array[1]
     push!(body.args, _KERNEL_END)
@@ -64,25 +73,19 @@ function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbst
     end
     if (!spec.settings.enable_bounds_checks)
         # inbounds
-        loops = Expr(:block, main_loops)
-        main_loops = Expr(:macrocall, Symbol("@inbounds"), nothing, loops)
+        main_loops = Expr(:macrocall, Symbol("@inbounds"), nothing, Expr(:block, main_loops))
     end
 
-    # TODO:
-    # Base.Experimental.@aliasscope begin
-    #     AC = Base.Experimental.Const(A) 
-    #     for i in eachindex(B, AC)
-    #         B[i] = AC[i] 
-    #     end
-    # end
-
+    # TODO: simd?
     generated_kernel = quote        
         function $kernel_name($(kernel_args...), $(_LOWER_BOUND), $(_UPPER_BOUND), $(_SIZE_SYMBOL))            
             # Hint that inputs do not alias
             Base.Experimental.@aliasscope begin
+                $(const_inputs.args...)
+
                 Threads.@threads for $(id_symbol) = 0:$(spec.settings.thread_count-1)
                     # Range calculations
-                    $(step) = div($(_SIZE_SYMBOL)[1], $(spec.settings.thread_count), Base.RoundUp)
+                    $(step) = cld($(_SIZE_SYMBOL)[1], $(spec.settings.thread_count))
                     $(rng_low) =  $(_LOWER_BOUND)[1] + $(step)*$(id_symbol)
                     $(rng_high) = min($(rng_low)+$(step)-1, $(_UPPER_BOUND)[1])
                     $(start_index) = CartesianIndex($(rng_low), $(lower_access...))
@@ -147,13 +150,13 @@ function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbst
         end
     end
 
-    # print("\n\nGenerated kernel: ")
-    # print(kernel_name)
-    # print("\n")
-    # print(generated_kernel)
-    # print("\nCaller:\n")
-    # print(kernel_caller)
-    # print("\n")
+    print("\n\nGenerated kernel: ")
+    print(kernel_name)
+    print("\n")
+    print(generated_kernel)
+    print("\nCaller:\n")
+    print(kernel_caller)
+    print("\n")
 
     return CompiledStencil(eval(kernel_caller), spec)
 end

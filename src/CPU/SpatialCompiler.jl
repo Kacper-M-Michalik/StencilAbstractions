@@ -1,5 +1,51 @@
+function gen_spatial_caller(spec::StencilSpecification, caller_name, kernel_args, first_grid_index, lower_offset, upper_offset, specialised_kernel_ptr)
+    if (spec.structure.halo)
+        return quote
+            function $(caller_name)($(kernel_args...); lower=(), upper=())                
+                if length(lower) != 0
+                    @assert length(lower) == $(spec.stencil.dimensions)
+                    lower = lower .+ $(lower_offset)
+                else
+                    lower = $(lower_offset) .+ 1
+                end 
+
+                if length(upper) != 0
+                    # TODO: Add actual size checks?
+                    @assert length(upper) == $(spec.stencil.dimensions)
+                    upper = upper .+ $(lower_offset)
+                else
+                    upper = size($(kernel_args[first_grid_index])) .- $(upper_offset)                    
+                end          
+
+                range = cld.((upper .- lower) .+ 1, $(spec.settings.tile_size))
+                $(specialised_kernel_ptr)($(kernel_args...), lower, upper, range)
+            end
+        end
+    else
+        return quote
+            function $(caller_name)($(kernel_args...); lower=(), upper=())                
+                if length(lower) != 0
+                    @assert length(lower) == $(spec.stencil.dimensions)
+                else
+                    lower = ntuple(val -> 1, $(spec.stencil.dimensions))
+                end 
+
+                if length(upper) != 0
+                    # TODO: Add actual size checks?
+                    @assert length(upper) == $(spec.stencil.dimensions)
+                else
+                    upper = size($(kernel_args[first_grid_index]))                  
+                end          
+
+                range = cld.((upper .- lower) .+ 1, $(spec.settings.tile_size))
+                $(specialised_kernel_ptr)($(kernel_args...), lower, upper, range)
+            end
+        end
+    end
+end
+
 # Dispatch in tiles
-function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbstractions.CPU, SpatialSettings}) where {B}
+function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbstractions.CPU, SpatialSettings{Copy}}) where {B}
     @assert spec.settings.thread_count > 0
 
     # Generate hygenic symbols for kernel function name, etc.
@@ -33,28 +79,27 @@ function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbst
         first_grid_index = length(kernel_args)
     end
         
+    # Add aliasing hints
+    const_inputs = Expr(:block)
+    const_replacements = Dict{Symbol, Symbol}()
+    for arg in spec.stencil.input_symbols
+        const_name = gensym(arg)
+        const_replacements[arg] = const_name
+        push!(const_inputs.args, :($(const_name) = Base.Experimental.Const($(arg))))
+    end
+
     # Compile kernel body    
-    body_array = gen_kernel(spec.stencil.body, spec, output_args, cursor_symbol, !spec.structure.halo, Dict{Symbol, Symbol}())
+    body_array = gen_kernel(spec.stencil.body, spec, output_args, cursor_symbol, !spec.structure.halo, const_replacements)
     @assert length(body_array) == 1
     body::Expr = body_array[1]
     push!(body.args, _KERNEL_END)
 
     # Generate iteration domain calculations  
-    lower_access = Any[]
-    upper_access = Any[]
-    for i in 2:spec.stencil.dimensions
-        push!(lower_access, :($(_LOWER_BOUND)[$(i)]))
-        push!(upper_access, :($(_UPPER_BOUND)[$(i)]))
-    end  
-
-    start_index = gensym(Symbol("start"))
-    end_index = gensym(Symbol("end"))        
-    step = gensym(Symbol("step"))
-    rng_low = gensym(Symbol("lower"))
-    rng_high = gensym(Symbol("high"))     
-
-    cursor_assignment = Expr(:(=), cursor_symbol, :($(start_index):$(end_index)))
-    main_loops = Expr(:for, cursor_assignment, body)    
+    linear_limit = gensym(Symbol("linear_limit"))
+    linear_index = gensym(Symbol("linear_index"))
+    base_loc = gensym(Symbol("base_loc"))
+    upper_loc = gensym(Symbol("upper_loc"))
+    tile_id = gensym(Symbol("tile_id"))
     
     # Apply optimisation flags
     function_tags = Symbol[]
@@ -64,33 +109,27 @@ function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbst
     end
     if (!spec.settings.enable_bounds_checks)
         # inbounds
-        loops = Expr(:block, main_loops)
-        main_loops = Expr(:macrocall, Symbol("@inbounds"), nothing, loops)
+        body = Expr(:macrocall, Symbol("@inbounds"), nothing, body)
     end
 
-    # TODO:
-    # Base.Experimental.@aliasscope begin
-    #     AC = Base.Experimental.Const(A) 
-    #     for i in eachindex(B, AC)
-    #         B[i] = AC[i] 
-    #     end
-    # end
-
+    # TODO: simd?
     generated_kernel = quote        
         function $kernel_name($(kernel_args...), $(_LOWER_BOUND), $(_UPPER_BOUND), $(_SIZE_SYMBOL))            
             # Hint that inputs do not alias
             Base.Experimental.@aliasscope begin
-                Threads.@threads for $(id_symbol) = 0:$(spec.settings.thread_count-1)
+                $(const_inputs.args...)
+
+                Threads.@threads for $(id_symbol) = 1:$(spec.settings.thread_count)
                     # Range calculations
-                    $(step) = div($(_SIZE_SYMBOL)[1], $(spec.settings.thread_count), Base.RoundUp)
-                    $(rng_low) =  $(_LOWER_BOUND)[1] + $(step)*$(id_symbol)
-                    $(rng_high) = min($(rng_low)+$(step)-1, $(_UPPER_BOUND)[1])
-                    $(start_index) = CartesianIndex($(rng_low), $(lower_access...))
-                    $(end_index) = CartesianIndex($(rng_high), $(upper_access...))
-                    
-                    
-                    # Main loops
-                    $(main_loops)
+                    $(linear_limit) = prod($(_SIZE_SYMBOL))
+                    for $(linear_index) in $(id_symbol):$(spec.settings.thread_count):$(linear_limit)
+                        $(tile_id) = CartesianIndices($(_SIZE_SYMBOL))[$(linear_index)]
+                        $(base_loc) = CartesianIndex(($(tile_id).I .- 1) .* $(spec.settings.tile_size) .+ $(_LOWER_BOUND))
+                        $(upper_loc) = CartesianIndex(min.($(base_loc).I .+ $(spec.settings.tile_size) .- 1, $(_UPPER_BOUND)))
+                        for $(cursor_symbol) in $(base_loc):$(upper_loc)
+                            $(body.args...)
+                        end
+                    end
                 end
             end      
         end
@@ -103,50 +142,7 @@ function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbst
     end    
     specialised_kernel_ptr = eval(generated_kernel)
     
-    local kernel_caller
-    if (spec.structure.halo)
-        kernel_caller = quote
-            function $(caller_name)($(kernel_args...); lower=(), upper=())                
-                if length(lower) != 0
-                    @assert length(lower) == $(spec.stencil.dimensions)
-                    lower = lower .+ $(lower_offset)
-                else
-                    lower = $(lower_offset) .+ 1
-                end 
-
-                if length(upper) != 0
-                    # TODO: Add actual size checks?
-                    @assert length(upper) == $(spec.stencil.dimensions)
-                    upper = upper .+ $(lower_offset)
-                else
-                    upper = size($(kernel_args[first_grid_index])) .- $(upper_offset)                    
-                end          
-
-                range = (upper .- lower) .+ 1
-                $(specialised_kernel_ptr)($(kernel_args...), lower, upper, range)
-            end
-        end
-    else
-        kernel_caller = quote
-            function $(caller_name)($(kernel_args...); lower=(), upper=())                
-                if length(lower) != 0
-                    @assert length(lower) == $(spec.stencil.dimensions)
-                else
-                    lower = ntuple(val -> 1, $(spec.stencil.dimensions))
-                end 
-
-                if length(upper) != 0
-                    # TODO: Add actual size checks?
-                    @assert length(upper) == $(spec.stencil.dimensions)
-                else
-                    upper = size($(kernel_args[first_grid_index]))                  
-                end          
-
-                range = (upper .- lower) .+ 1
-                $(specialised_kernel_ptr)($(kernel_args...), lower, upper, range)
-            end
-        end
-    end
+    kernel_caller = gen_spatial_caller(spec, caller_name, kernel_args, first_grid_index, lower_offset, upper_offset, specialised_kernel_ptr)    
 
     # print("\n\nGenerated kernel: ")
     # print(kernel_name)
@@ -156,5 +152,5 @@ function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbst
     # print(kernel_caller)
     # print("\n")
 
-    return eval(kernel_caller)
+    return CompiledStencil(eval(kernel_caller), spec)
 end

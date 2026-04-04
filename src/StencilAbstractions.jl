@@ -8,8 +8,9 @@ export
     StencilSpecification, StencilEquation, alloc, compile_stencil,
     CPUBackend,
     CartesianGrid, TreeGrid, 
-    GridBoundary, DefaultValue, WrapAround, Mirror, MirrorWithBounce, None,
-    BasicSettings, SpatialSettings, DiamondSettings, CandySettings, GatherSettings, OverlappedSettings
+    GridBoundary, DefaultValue, WrapAround, Mirror, MirrorWithBounce, NoBoundary,
+    BasicSettings, SpatialSettings, DiamondSettings, CandySettings, GatherSettings, OverlappedSettings,
+    Copy, Inplace_UNSAFE
     
 include("Defs.jl")
 include("Helpers.jl")
@@ -17,6 +18,8 @@ include("Boundaries.jl")
 include("Shared/Parser.jl")
 include("Shared/KernelCompiler.jl")
 include("CPU/BasicCompiler.jl")
+include("CPU/SpatialCompiler.jl")
+include("CPU/SpatialInplaceCompiler.jl")
 include("GPU/BasicCompiler.jl")
 
 macro stencil(equation)      
@@ -25,7 +28,7 @@ macro stencil(equation)
     end
     
     stencil_name = equation.args[1].args[1]
-    stencil_object = process_stencil_equation(equation)
+    stencil_object = process_stencil_equation(equation, __module__)
 
     return esc(quote    
         $stencil_name = $stencil_object

@@ -4,6 +4,7 @@ function gen_kernel(expr, spec::StencilSpecification{CartesianGrid, B, D}, outpu
     end
     
     # TODO: @returns
+    # TODO: @index
 
     # Replace return with output array write and early return
     if (expr.head === :return)        

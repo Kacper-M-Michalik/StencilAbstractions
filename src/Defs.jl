@@ -7,7 +7,7 @@ end
 struct WrapAround <: BoundaryType end
 struct Mirror <: BoundaryType end
 struct MirrorWithBounce <: BoundaryType end
-struct None <: BoundaryType end
+struct NoBoundary <: BoundaryType end
 
 abstract type Structure end
 Base.@kwdef struct CartesianGrid <: Structure 
@@ -15,19 +15,25 @@ Base.@kwdef struct CartesianGrid <: Structure
 end
 struct TreeGrid <: Structure end
 
+abstract type WriteMode end
+struct Copy <: WriteMode end
+struct Inplace_UNSAFE <: WriteMode end
+
 abstract type ComputationSettings end
-Base.@kwdef struct BasicSettings <: ComputationSettings
+Base.@kwdef struct BasicSettings{W <: WriteMode} <: ComputationSettings
     enable_fastmath::Bool = false
     enable_bounds_checks::Bool = false    
+    write_mode::W = Copy()
     # GPU Only
     block_size = (32, 16)
     # CPU Only
     thread_count = 4    
 end
 
-Base.@kwdef struct SpatialSettings <: ComputationSettings
+Base.@kwdef struct SpatialSettings{W <: WriteMode} <: ComputationSettings
     enable_fastmath::Bool = false
-    enable_bounds_checks::Bool = false    
+    enable_bounds_checks::Bool = false
+    write_mode::W = Copy()    
     tile_size = (32, 32)
     thread_count = 4    
 end
@@ -51,6 +57,15 @@ Base.@kwdef struct OverlappedSettings <: ComputationSettings
     tile_size = (32, 32)
     block_size = (256)
     timesteps::Int64 = 2 
+end
+
+Base.@kwdef struct PatternSettings{W <: WriteMode} <: ComputationSettings
+    enable_fastmath::Bool = false
+    enable_bounds_checks::Bool = false    
+    # GPU Only
+    block_size = (32, 16)
+    # CPU Only
+    thread_count = 4    
 end
 
 Base.@kwdef mutable struct StencilDimension

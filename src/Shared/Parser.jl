@@ -1,7 +1,23 @@
 const mutating_operators = Set{Symbol}([:(=), :(+=), :(-=), :(*=), :(/=), :(\=), :(÷=), :(//=), :(^=), :(%=), :(&=), :(|=), :(⊻=), :(<<=), :(>>>=), :(>>=)])
 # TODO: ADD BROADCASTING OPERATORS
 
-function process_stencil_equation(equation::Expr)
+function inline_consts(node, mod::Module)
+    if node isa Symbol
+        if (isdefined(mod, node) && isconst(mod, node))
+            return getfield(mod, node)
+        end
+        return node
+    elseif node isa Expr
+        args = Any[]
+        for arg in node.args
+            push!(args, inline_consts(arg, mod))
+        end
+        return Expr(node.head, args...)
+    end
+    return node
+end
+
+function process_stencil_equation(equation::Expr, mod::Module)
     # Verify stencil definition args 
     stencil_name = equation.args[1].args[1]
     stencil_args = Tuple{Symbol, Union{Symbol, Nothing}}[]    
@@ -46,6 +62,7 @@ function process_stencil_equation(equation::Expr)
     if !(body isa Expr && body.head === :block)
         error("Invalid stencil body declaration!")
     end
+    body = inline_consts(body, mod)
 
     # Here we verify the stencil kernel syntax
     # 1. TODO: Check all variables used are declared locally (maintain declaration stack and stop global usage)
@@ -89,6 +106,13 @@ function process_stencil_equation(equation::Expr)
 
             @assert length(indices) > 0 "Stencil array indices cannot be empty!"
             for index in indices
+                if !(index isa Int64) 
+                    println("Stencil def: ")
+                    print(stencil_name)
+                    println(equation)
+                    dump(index)
+                    println() 
+                end
                 @assert index isa Int64 "Stencil array indices must be integer constants!"
             end
 
