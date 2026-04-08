@@ -1,5 +1,5 @@
 # Dispatch in tiles, inplace
-function compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbstractions.CPU, SpatialSettings{Inplace_UNSAFE}}) where {B}
+function internal_compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbstractions.CPU, SpatialSettings{Inplace_UNSAFE}}) where {B}
     @assert spec.settings.thread_count > 0
 
     # Generate hygenic symbols for kernel function name, etc.

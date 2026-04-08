@@ -1,7 +1,5 @@
-const mutating_operators = Set{Symbol}([:(=), :(+=), :(-=), :(*=), :(/=), :(\=), :(÷=), :(//=), :(^=), :(%=), :(&=), :(|=), :(⊻=), :(<<=), :(>>>=), :(>>=)])
-# TODO: ADD BROADCASTING OPERATORS
 
-function inline_consts(node, mod::Module)
+function inline_body(mod::Module, node)
     if node isa Symbol
         if (isdefined(mod, node) && isconst(mod, node))
             return getfield(mod, node)
@@ -10,7 +8,7 @@ function inline_consts(node, mod::Module)
     elseif node isa Expr
         args = Any[]
         for arg in node.args
-            push!(args, inline_consts(arg, mod))
+            push!(args, inline_body(mod, arg))
         end
         return Expr(node.head, args...)
     end
@@ -21,37 +19,49 @@ function process_stencil_equation(equation::Expr, mod::Module)
     # Verify stencil definition args 
     stencil_name = equation.args[1].args[1]
     stencil_args = Tuple{Symbol, Union{Symbol, Nothing}}[]    
-    input_symbols = Symbol[]
-    output_symbols = Symbol[]    
-    explicit_output_count = 0
+    input_grids = Set{Symbol}()
+    output_grids = Set{Symbol}()    
+    grids = Symbol[]    
     first_grid_index = 0
+    sources = Dict{Symbol, StencilSource}()
+    dimensions = 0
+    unsafe_stencil = false
+    inplace_stencil = false
 
     # Verify function args are all symbols
     for (i, arg) in enumerate(equation.args[1].args[2:end])
-        if (arg isa Expr && arg.head === :macrocall)
-            @assert length(arg.args) == 3
-            @assert arg.args[1] == Symbol("@Input") || arg.args[1] == Symbol("@Output")
-            #@assert length(arg.args) == 3 && arg.args[1] == Symbol("@Output") "Incorrectly used @Output macro"
+        # if (arg isa Expr && arg.head === :macrocall)
+        #     @assert length(arg.args) == 3
+        #     @assert arg.args[1] == Symbol("@Input") || arg.args[1] == Symbol("@Output")
+        #     #@assert length(arg.args) == 3 && arg.args[1] == Symbol("@Output") "Incorrectly used @Output macro"
             
-            if (first_grid_index == 0)
-                first_grid_index = i
-            end
+        #     if (first_grid_index == 0)
+        #         first_grid_index = i
+        #     end
 
-            if (arg.args[1] == Symbol("@Output"))
-                push!(output_symbols, arg.args[3])
-                explicit_output_count += 1
-            else
-                push!(input_symbols, arg.args[3])                             
-            end           
-            push!(stencil_args, (arg.args[3], nothing))   
+        #     if (arg.args[1] == Symbol("@Output"))
+        #         push!(output_grids, arg.args[3])
+        #         explicit_output_count += 1
+        #     else
+        #         push!(input_grids, arg.args[3])                             
+        #     end           
+        #     push!(stencil_args, (arg.args[3], nothing))   
         
-        elseif (arg isa Expr && arg.head === :(::))
+        # else
+        if (arg isa Expr && arg.head === :(::))
             @assert length(arg.args) == 2
-            push!(stencil_args, (arg.args[1], arg.args[2]))   
+            if (arg.args[2] == _GRID_TYPE)
+                if (first_grid_index == 0)
+                    first_grid_index = i
+                end
 
-        elseif (arg isa Symbol)   
-            push!(stencil_args, (arg, nothing))   
-
+                push!(stencil_args, (arg.args[1], nothing))
+                push!(grids, arg.args[1])
+            else
+                push!(stencil_args, (arg.args[1], arg.args[2]))
+            end
+        elseif (arg isa Symbol)
+            push!(stencil_args, (arg, nothing))
         else
             error("Stencil argument at position $i is not a valid variable!")
         end
@@ -62,66 +72,68 @@ function process_stencil_equation(equation::Expr, mod::Module)
     if !(body isa Expr && body.head === :block)
         error("Invalid stencil body declaration!")
     end
-    body = inline_consts(body, mod)
+
+    # Expand macros and inline consts to allow for proper parsing of body
+    body = macroexpand(mod, body)
+    body = inline_body(mod, body)
 
     # Here we verify the stencil kernel syntax
     # 1. TODO: Check all variables used are declared locally (maintain declaration stack and stop global usage)
-    # 2. Check mutations only occur to local variables and not any stencil arguments
+    # 2. Discover all mutations, to determine inputs/outputs and if this is an inplace stencil
     # 3. Discover all grid accesses, ensure they match in dimensionality, and use offsets to calculate stencil size
-    inputs_lookup = Set{Symbol}(input_symbols)
-
-    sources = Dict{Symbol, StencilSource}()
-    dimensions = 0
+    grids_lookup = Set{Symbol}(grids)
     
     exprs = Stack{Expr}()
     push!(exprs, body)
 
     while (!isempty(exprs))
         current::Expr = pop!(exprs)
-
-        # Check if a mutating operator has been used on an argument
-        if (in(current.head, mutating_operators))
+        
+        # Check if we are writing to a grid
+        if (current.head === :(=) || in(current.head, inplace_operators))
             @assert length(current.args) == 2
             lhs = current.args[1]
             rhs = current.args[2]
-            
-            if (lhs isa Symbol)
-                @assert !in(lhs, inputs_lookup) "Cannot mutate stencil arguments!" 
+
+            if (lhs isa Symbol && in(lhs, grids_lookup))
+                if (current.head === :(=))
+                    push!(output_grids, lhs)
+                else
+                    push!(input_grids, lhs)
+                    push!(output_grids, lhs)
+                end
             elseif (lhs isa Expr && lhs.head === :ref)
                 error("Cannot write to an array at an index!")
+                #@assert (!(lhs.args[1] isa Symbol) || !(in(lhs.args[1], grids))) "Cannot index into a grid assignment, to write to a grid only use its variable name!"
             end
-            if (rhs isa Expr) push!(exprs, rhs) end
 
-        # Multi buffer return macro (@returns)
-        elseif (current.head === :macrocall && current.args[1] == Symbol("@returns"))
-            @assert length(current.args) == 3 && current.args[3] isa Expr && current.args[3].head === :tuple
-            return_list = current.args[3]
-            @assert length(return_list.args) > 0
-            explicit_output_count = max(explicit_output_count, length(return_list.args))
+            if (rhs isa Expr) push!(exprs, rhs) end        
 
         # Found local access, save indexing information                    
-        elseif (current.head === :ref && in(current.args[1], inputs_lookup)) 
+        elseif (current.head === :ref && in(current.args[1], grids_lookup)) 
             var_name = current.args[1]
             indices = current.args[2:end]
 
             @assert length(indices) > 0 "Stencil array indices cannot be empty!"
             for index in indices
-                if !(index isa Int64) 
-                    println("Stencil def: ")
+                if !(index isa Int) 
+                    error("")
+                    println("Error in stencil def: ")
                     print(stencil_name)
                     println(equation)
                     dump(index)
                     println() 
                 end
-                @assert index isa Int64 "Stencil array indices must be integer constants!"
-            end
+                @assert index isa Int "Stencil array indices must be integer constants!"
+            end            
 
             if (dimensions == 0)
                 dimensions = length(indices)
             else
                 @assert length(indices) == dimensions
             end
-            
+
+            push!(input_grids, var_name)
             if !haskey(sources, var_name)
                 radii = Vector{StencilDimension}()
                 for index in indices
@@ -152,18 +164,14 @@ function process_stencil_equation(equation::Expr, mod::Module)
         end
     end
 
-    # for input in input_symbols
-    #     if !haskey(sources, input)
-            
-    #     end
-    # end
+    for input in input_grids
+        if (in(input, output_grids))
+            inplace_stencil = true
+            if (length(sources[input].offsets) > 1 || sources[input].offsets[1] != ntuple(val -> 0, dimensions))
+                unsafe_stencil = true
+            end
+        end
+    end
 
-    # # Create any implicit end-of-args output buffer arguments
-    # while (length(stencil_outputs) < explicit_output_count)        
-    #     output_symbol = gensym("output")
-    #     push!(stencil_outputs, output_symbol)
-    #     push!(stencil_args, (output_symbol, nothing))        
-    # end
-
-    return StencilEquation(stencil_name, stencil_args, body, input_symbols, output_symbols, explicit_output_count, first_grid_index, sources, dimensions)
+    return StencilEquation(stencil_name, stencil_args, body, collect(input_grids), collect(output_grids), first_grid_index, sources, dimensions, inplace_stencil, unsafe_stencil)
 end
