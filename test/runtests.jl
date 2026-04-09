@@ -5,18 +5,16 @@ module StencilTests
 # using StencilAbstractions
 using KernelAbstractions
 using Polyester
-using CUDA
-using CUDA.CUDAKernels
+# using CUDA
+# using CUDA.CUDAKernels
 
-# Make sure all operations are being properly compiled for GPU
-CUDA.allowscalar(false)
-CUDA.set_runtime_version!(v"12.6")
+# # Make sure all operations are being properly compiled for GPU
+# CUDA.allowscalar(false)
+# CUDA.set_runtime_version!(v"12.6")
 
 # Temp
 include("./../src/StencilAbstractions.jl")
 using .StencilAbstractions
-
-
 
 
 @stencil function conway(A::Grid, B::Grid) 
@@ -38,9 +36,13 @@ const one = 1
 end
 
 
+@stencil function compute_V_stencil(Vx::Grid, Vy::Grid, P::Grid, dt::Float64, p::Float64, dx::Float64, dy::Float64)
+    Vx = Vx[0, 0] - dt/p * (P[1, 0] - P[0, 0])/dx
+    Vy = Vy[0, 0] - dt/p * (P[0, 1] - P[0, 0])/dy
+end
 
-@compile_stencil(CONWAY, conway, CartesianGrid(), DefaultValue{Int32}(0), CUDABackend(), BasicSettings())
-@compile_stencil(ADDER, adder, CartesianGrid(), DefaultValue{Int32}(0), CUDABackend(), BasicSettings())
+@compile_stencil(CONWAY, conway, CartesianGrid(), DefaultValue{Int32}(0), CPUBackend(), BasicSettings())
+@compile_stencil(ADDER, adder, CartesianGrid(), DefaultValue{Int32}(0), CPUBackend(), BasicSettings())
 #conway_spec = StencilSpecification(conway, CartesianGrid(), DefaultValue{Int32}(0), CPUBackend(), SpatialSettings())
 
 arr = Int32[0 1 0 1

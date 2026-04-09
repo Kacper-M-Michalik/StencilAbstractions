@@ -55,7 +55,7 @@ function internal_compile_stencil(spec::StencilSpecification{CartesianGrid, B, K
         function $kernel_name($(kernel_args...), $(_LOWER_BOUND), $(_UPPER_BOUND), $(_SIZE_SYMBOL), $(_THREADS_SYMBOL))            
             $(step) = cld($(_SIZE_SYMBOL)[1], $(_THREADS_SYMBOL))
 
-            @batch for $(id_symbol) = 0:($(_THREADS_SYMBOL)-1)
+            Polyester.@batch for $(id_symbol) = 0:($(_THREADS_SYMBOL)-1)
                 # Range calculations                    
                 $(rng_low) =  $(_LOWER_BOUND)[1] + $(step)*$(id_symbol)
                 $(rng_high) = min($(rng_low)+$(step)-1, $(_UPPER_BOUND)[1])

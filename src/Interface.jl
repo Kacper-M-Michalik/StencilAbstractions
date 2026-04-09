@@ -149,3 +149,11 @@ end
 function (stencil::CompiledStencil)(args...; lower=(), upper=(), threads=0, block_size=(), order=nothing)
     stencil.kernel(args..., lower, upper, threads, block_size, order)
 end
+
+function generate_graph_loop(func, count, backend, unroll_count)
+    error("Unknown Backend for graph loop!")
+end
+
+function get_stencil(::Val) 
+    return nothing
+end

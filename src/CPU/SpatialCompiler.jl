@@ -68,7 +68,7 @@ function internal_compile_stencil(spec::StencilSpecification{CartesianGrid, B, K
                     # Range calculations
                     $(linear_limit) = prod($(_SIZE_SYMBOL))
                     #for $(linear_index) in $(id_symbol):$(spec.settings.thread_count):$(linear_limit)
-                    @batch for $(linear_index) in 1:$(linear_limit)
+                    Polyester.@batch for $(linear_index) in 1:$(linear_limit)
                         $(tile_id) = CartesianIndices($(_SIZE_SYMBOL))[$(linear_index)]
                         $(base_loc) = CartesianIndex(($(tile_id).I .- 1) .* $(spec.settings.tile_size) .+ $(_LOWER_BOUND))
                         $(upper_loc) = CartesianIndex(min.($(base_loc).I .+ $(spec.settings.tile_size) .- 1, $(_UPPER_BOUND)))
@@ -91,7 +91,7 @@ function internal_compile_stencil(spec::StencilSpecification{CartesianGrid, B, K
             function $(caller_name)($(kernel_args...), lower, upper, threads, block, order)                
                 if length(lower) != 0
                     @assert length(lower) == $(spec.stencil.dimensions)
-                    lower = lower .+ $(lower_offset)
+                    #lower = lower .+ $(lower_offset)
                 else
                     lower = $(lower_offset) .+ 1
                 end 
@@ -99,7 +99,7 @@ function internal_compile_stencil(spec::StencilSpecification{CartesianGrid, B, K
                 if length(upper) != 0
                     # TODO: Add actual size checks?
                     @assert length(upper) == $(spec.stencil.dimensions)
-                    upper = upper .+ $(lower_offset)
+                    #upper = upper .+ $(lower_offset)
                 else
                     upper = size($(kernel_args[first_grid_index])) .- $(upper_offset)                    
                 end          
