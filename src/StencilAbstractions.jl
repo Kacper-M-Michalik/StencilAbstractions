@@ -6,23 +6,32 @@ using Polyester
 using StaticArrays
 
 export
-    @stencil, @compile_stencil, @iter,
-    @Box,
-    CompiledStencil, StencilSpecification, StencilEquation, alloc, compile_stencil,
-    CPUBackend,
-    CartesianGrid, TreeGrid, 
-    GridBoundary, DefaultValue, WrapAround, Mirror, MirrorWithBounce, Halo,
-    BasicSettings, SpatialSettings, DiamondSettings, CandySettings, GatherSettings, OverlappedSettings,
-    Copy, Inplace_UNSAFE
-    
+    @stencil, @compile_stencil, compile_stencil, alloc, generate_mask,
+    @iter,
+    @box,
+    CompiledStencil, StencilSpecification, StencilEquation,     
+    CartesianGrid, 
+    GridBoundary, Halo, NonHalo, DefaultValue, WrapAround, Mirror,
+    BasicSettings, SpatialSettings, OverlappedSettings,
+    Parallel, RedBlack, MultiColour, ExecutionMask, GREEDY, ROSC,
+    SingleThread, JuliaThreads, PolyesterThreads,
+    CPUBackend
+
 include("Defs.jl")
-include("Interface.jl")
 include("Boundaries.jl")
-include("Shared/Parser.jl")
+include("Helpers.jl")
+
+include("Mask/Generation.jl")
+include("Graphs/CPU.jl")
+include("Interface.jl")
+
+include("Shared/Analyser.jl")
 include("Shared/KernelCompiler.jl")
 include("CPU/BasicCompiler.jl")
 include("CPU/SpatialCompiler.jl")
-include("GPU/BasicCompiler.jl")
-include("Macros.jl")
+# include("GPU/BasicCompiler.jl")
+#include("GPU/SpatialCompiler.jl")
+#include("GPU/OverlappedCompiler.jl")
+include("EDSLMacros.jl")
 
 end

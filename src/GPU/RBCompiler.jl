@@ -1,1 +1,0 @@
-# probs try modyfying spatial -> loop area sliced half in each dim, multipyl by 2 - 1/0 to get red/black coord

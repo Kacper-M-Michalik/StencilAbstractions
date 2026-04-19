@@ -2,6 +2,7 @@ using KernelAbstractions
 using Polyester
 using CUDA
 using CUDA.CUDAKernels
+
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 using StencilAbstractions

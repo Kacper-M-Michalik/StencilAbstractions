@@ -1,11 +1,9 @@
 
 function inline_body(mod::Module, node)
-    if node isa Symbol
-        if (isdefined(mod, node) && isconst(mod, node))
-            return getfield(mod, node)
-        end
+    if (node isa Symbol)
+        if (isdefined(mod, node) && isconst(mod, node)) return getfield(mod, node) end
         return node
-    elseif node isa Expr
+    elseif (node isa Expr)
         args = Any[]
         for arg in node.args
             push!(args, inline_body(mod, arg))
@@ -15,45 +13,45 @@ function inline_body(mod::Module, node)
     return node
 end
 
-function process_stencil_equation(equation::Expr, mod::Module)
-    # Verify stencil definition args 
-    stencil_name = equation.args[1].args[1]
+function verify_keywords(mod::Module, node)
+    if (node isa Expr)
+        if (node.head in blocked_keywords)         
+            return false 
+        end     
+        for arg in node.args
+            if (verify_keywords(mod, arg) == false) return false end
+        end
+    end
+    
+    return true
+end
+
+function verify_annotations(mod::Module, node)
+    if (node isa Expr)
+        if (node.head === :(::))         
+            return true 
+        end     
+        for arg in node.args
+            if (verify_annotations(mod, arg) == true) return true end
+        end
+    end
+    
+    return false
+end
+
+function process_args(signature)
     stencil_args = Tuple{Symbol, Union{Symbol, Nothing}}[]    
-    input_grids = Set{Symbol}()
-    output_grids = Set{Symbol}()    
     grids = Symbol[]    
-    first_grid_index = 0
-    sources = Dict{Symbol, StencilSource}()
-    dimensions = 0
-    unsafe_stencil = false
-    inplace_stencil = false
+    # first_grid_index = 0
 
     # Verify function args are all symbols
-    for (i, arg) in enumerate(equation.args[1].args[2:end])
-        # if (arg isa Expr && arg.head === :macrocall)
-        #     @assert length(arg.args) == 3
-        #     @assert arg.args[1] == Symbol("@Input") || arg.args[1] == Symbol("@Output")
-        #     #@assert length(arg.args) == 3 && arg.args[1] == Symbol("@Output") "Incorrectly used @Output macro"
-            
-        #     if (first_grid_index == 0)
-        #         first_grid_index = i
-        #     end
-
-        #     if (arg.args[1] == Symbol("@Output"))
-        #         push!(output_grids, arg.args[3])
-        #         explicit_output_count += 1
-        #     else
-        #         push!(input_grids, arg.args[3])                             
-        #     end           
-        #     push!(stencil_args, (arg.args[3], nothing))   
-        
-        # else
+    for (i, arg) in enumerate(signature.args[2:end])
         if (arg isa Expr && arg.head === :(::))
             @assert length(arg.args) == 2
             if (arg.args[2] == _GRID_TYPE)
-                if (first_grid_index == 0)
-                    first_grid_index = i
-                end
+                # if (first_grid_index == 0)
+                #     first_grid_index = i
+                # end
 
                 push!(stencil_args, (arg.args[1], nothing))
                 push!(grids, arg.args[1])
@@ -63,26 +61,49 @@ function process_stencil_equation(equation::Expr, mod::Module)
         elseif (arg isa Symbol)
             push!(stencil_args, (arg, nothing))
         else
-            error("Stencil argument at position $i is not a valid variable!")
+            error("Invalid stencil argument at position $i")
         end
     end
 
-    # Extract stencil program block
+    return stencil_args, grids #, first_grid_index
+end
+
+function process_stencil_definition(equation::Expr, mod::Module, line, file)
+    @assert (equation isa Expr && equation.head === :function) "Invalid stencil declaration, must be a function definition on line $line in $file"
+    @assert length(equation.args) == 2 "Invalid stencil declaration, too many arguments on line $line in $file"
+
+    # Extract stencil information
+    stencil_name = equation.args[1].args[1]
     body = equation.args[2]
     if !(body isa Expr && body.head === :block)
-        error("Invalid stencil body declaration!")
+        error("Invalid stencil declaration on line $line in $file")
     end
 
-    # Expand macros and inline consts to allow for proper parsing of body
+    # Process function signature
+    stencil_args, grids = process_args(equation.args[1])
+
+    # Expand macros and inline consts to allow for proper parsing of body    
     body = macroexpand(mod, body)
-    body = inline_body(mod, body)
+    body = inline_body(mod, body)     
+
+    # Verify valid definition   
+    if (!verify_keywords(mod, body))
+        error("Invalid keyword used inside stencil body on line $line in $file")
+    end
+    contains_annotations = verify_annotations(mod, body)
+    
+    # Static analysis of stencil
+    input_grids = Set{Symbol}()
+    output_grids = Set{Symbol}()    
+    sources = Dict{Symbol, StencilSource}()
+    dimensions = 0
+    unsafe_stencil = false
+    inplace_stencil = false
 
     # Here we verify the stencil kernel syntax
-    # 1. TODO: Check all variables used are declared locally (maintain declaration stack and stop global usage)
-    # 2. Discover all mutations, to determine inputs/outputs and if this is an inplace stencil
-    # 3. Discover all grid accesses, ensure they match in dimensionality, and use offsets to calculate stencil size
-    grids_lookup = Set{Symbol}(grids)
-    
+    # 1. Discover all mutations, to determine inputs/outputs and if this is an inplace stencil
+    # 2. Discover all grid accesses, ensure they match in dimensionality, and use offsets to calculate stencil size
+    grids_lookup = Set{Symbol}(grids)        
     exprs = Stack{Expr}()
     push!(exprs, body)
 
@@ -164,6 +185,7 @@ function process_stencil_equation(equation::Expr, mod::Module)
         end
     end
 
+    # Check if stencil is Jacobi-like or Gauss-Siedel-like
     for input in input_grids
         if (in(input, output_grids))
             inplace_stencil = true
@@ -173,5 +195,5 @@ function process_stencil_equation(equation::Expr, mod::Module)
         end
     end
 
-    return StencilEquation(stencil_name, stencil_args, body, collect(input_grids), collect(output_grids), first_grid_index, sources, dimensions, inplace_stencil, unsafe_stencil)
+    return StencilEquation(stencil_name, stencil_args, grids, collect(input_grids), collect(output_grids), body, sources, dimensions, inplace_stencil, unsafe_stencil, contains_annotations)
 end

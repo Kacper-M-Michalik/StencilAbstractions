@@ -1,8 +1,51 @@
-# todo, edge kernels
-# on alloc we apply edge? or before iter -> before leave invalid boundary
-#
+function get_boundary_check(boundary::DefaultValue, array, var, cursor, offset)
+    # return quote
+    #     local $var
+    #     if checkbounds(Bool, $array, ($cursor + CartesianIndex($(offset...))))
+    #         $var = grid[($cursor + CartesianIndex($(offset...)))]
+    #     else
+    #         $var = $(boundary.value)
+    #     end
+    # end
+    
+    return quote
+        $var = get($array, ($cursor + CartesianIndex($(offset...))), $(boundary.value))
+    end
+end
 
+function get_boundary_check(boundary::WrapAround, array, var, cursor, offset)
+    return quote
+        local $var
+        if checkbounds(Bool, $array, ($cursor + CartesianIndex($(offset...))))
+            $var = $(array)[($cursor + CartesianIndex($(offset...)))]
+        else
+            $var = $(array)[CartesianIndex(mod1.(($cursor + CartesianIndex($(offset...))).I, size($array)))]
+        end
+    end
+end
 
+# @inline Base.@propagate_inbounds function _get_mirror(grid, index::CartesianIndex{N}) where {N}
+#     if checkbounds(Bool, grid, index)
+#         return grid[index]
+#     end
+    
+#     bounds = size(grid)
+#     # This block is emitted/unrolled for each dimension d
+#     new_indices = ntuple(Val(N)) do d
+#         val = index[d]
+#         bound = bounds[d]
+        
+#         if val < 1
+#             return 1 - val
+#         elseif val > bound
+#             return 2 * bound + 1 - val
+#         else
+#             return val
+#         end
+#     end
+    
+#     return grid[CartesianIndex(new_indices)]
+# end
 
 
 
@@ -41,10 +84,8 @@ end
             return val
         end
     end
-    new_index = CartesianIndex(new_indices)    
-
-    # Checks if in bounds, may disable for optimisation?
-    return grid[new_index]
+    
+    return grid[CartesianIndex(new_indices)]
 end
 
 # # If index still not in range after mirroring, repeat mirroring till in range

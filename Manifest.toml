@@ -2,7 +2,7 @@
 
 julia_version = "1.12.1"
 manifest_format = "2.0"
-project_hash = "b2a4cf755e85df65b459a10c1be827d879b4f37f"
+project_hash = "a352b085774d3b3d1e62174f44b2dbfc3dc55b5f"
 
 [[deps.Adapt]]
 deps = ["LinearAlgebra", "Requires"]
@@ -91,6 +91,17 @@ deps = ["CpuId", "IfElse", "PrecompileTools", "Preferences", "Static"]
 git-tree-sha1 = "f3a21d7fc84ba618a779d1ed2fcca2e682865bab"
 uuid = "2a0fbf3d-bb9c-48f3-b0a9-814d99fd7ab9"
 version = "0.2.7"
+
+[[deps.CellArrays]]
+deps = ["Adapt", "StaticArrays"]
+git-tree-sha1 = "ee581137b9d9b561aa0d988982e365b5b2dadf43"
+uuid = "d35fcfd7-7af4-4c67-b1aa-d78070614af4"
+version = "0.3.3"
+
+    [deps.CellArrays.weakdeps]
+    AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
+    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+    Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 
 [[deps.CloseOpenIntervals]]
 deps = ["Static", "StaticArrayInterface"]
@@ -206,6 +217,29 @@ git-tree-sha1 = "05868e21324cede2207c6f0f466b4bfef6d5e7ee"
 uuid = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
 version = "1.8.1"
 
+[[deps.ParallelStencil]]
+deps = ["CellArrays", "MacroTools", "Random", "StaticArrays"]
+git-tree-sha1 = "1f116cbc375222ea7c35eae3380ada7f1515a5a4"
+uuid = "94395366-693c-11ea-3b26-d9b7aac5d958"
+version = "0.16.0"
+
+    [deps.ParallelStencil.extensions]
+    ParallelStencil_AMDGPUExt = "AMDGPU"
+    ParallelStencil_CUDAExt = "CUDA"
+    ParallelStencil_EnzymeExt = "Enzyme"
+    ParallelStencil_KernelAbstractionsExt = "KernelAbstractions"
+    ParallelStencil_MetalExt = "Metal"
+    ParallelStencil_OneAPIExt = "oneAPI"
+
+    [deps.ParallelStencil.weakdeps]
+    AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
+    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+    Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+    KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+    Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
+    Polyester = "f517fe37-dbe3-4b94-8317-1923a5111588"
+    oneAPI = "8f75cd03-7ff8-4ecb-9b8f-daf728133b1b"
+
 [[deps.Polyester]]
 deps = ["ArrayInterface", "BitTwiddlingConvenienceFunctions", "CPUSummary", "IfElse", "ManualMemory", "PolyesterWeave", "Static", "StaticArrayInterface", "StrideArraysCore", "ThreadingUtilities"]
 git-tree-sha1 = "16bbc30b5ebea91e9ce1671adc03de2832cff552"
@@ -299,16 +333,30 @@ git-tree-sha1 = "6ab403037779dae8c514bad259f32a447262455a"
 uuid = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
 version = "1.4.4"
 
+[[deps.Statistics]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "ae3bb1eb3bba077cd276bc5cfc337cc65c3075c0"
+uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+version = "1.11.1"
+
+    [deps.Statistics.extensions]
+    SparseArraysExt = ["SparseArrays"]
+
+    [deps.Statistics.weakdeps]
+    SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+
 [[deps.StencilAbstractions]]
-deps = ["DataStructures", "KernelAbstractions", "Polyester", "StaticArrays"]
+deps = ["DataStructures", "KernelAbstractions", "ParallelStencil", "Polyester", "StaticArrays", "Statistics"]
 path = "."
 uuid = "f78e58d0-a86d-473a-8ba8-1812b7e1db75"
 version = "0.1.0"
 
     [deps.StencilAbstractions.extensions]
+    StencilAbstractionsAMDGPUExt = "AMDGPU"
     StencilAbstractionsCUDAExt = "CUDA"
 
     [deps.StencilAbstractions.weakdeps]
+    AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
     CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 
 [[deps.StrideArraysCore]]

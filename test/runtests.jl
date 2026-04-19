@@ -30,19 +30,24 @@ using .StencilAbstractions
     end
 end
 
-const one = 1
+one = 1
 @stencil function adder(A::Grid) 
     A = A[0,0] + one
 end
 
+# dump(quote 
+#     Polyester.@batch for i in 1:10
 
-@stencil function compute_V_stencil(Vx::Grid, Vy::Grid, P::Grid, dt::Float64, p::Float64, dx::Float64, dy::Float64)
-    Vx = Vx[0, 0] - dt/p * (P[1, 0] - P[0, 0])/dx
-    Vy = Vy[0, 0] - dt/p * (P[0, 1] - P[0, 0])/dy
-end
+#     end
+# end)
 
-@compile_stencil(CONWAY, conway, CartesianGrid(), DefaultValue{Int32}(0), CPUBackend(), BasicSettings())
-@compile_stencil(ADDER, adder, CartesianGrid(), DefaultValue{Int32}(0), CPUBackend(), BasicSettings())
+
+# @compile_stencil(CONWAY, conway, CartesianGrid(), (DefaultValue{Int32}(0)), CPUBackend(), BasicSettings())
+# @compile_stencil(ADDER, adder, CartesianGrid(), (DefaultValue{Int32}(0)), CPUBackend(), BasicSettings())
+
+@compile_stencil(CONWAY, conway, CartesianGrid(), Halo(), CPUBackend(), SpatialSettings(threading=PolyesterThreads()))
+# @compile_stencil(ADDER, adder, CartesianGrid(), Halo(), CPUBackend(), BasicSettings())
+
 #conway_spec = StencilSpecification(conway, CartesianGrid(), DefaultValue{Int32}(0), CPUBackend(), SpatialSettings())
 
 arr = Int32[0 1 0 1
@@ -51,33 +56,30 @@ arr = Int32[0 1 0 1
             0 0 0 0]
 
 # In, Out are both buffers allocated on the correct device with appropriate padding, with views poiinting to the inner data only if halos are enabled
-in, in_view = alloc(CONWAY.settings, arr) #alloc(conway_spec, arr)
-out, out_view = zeros(CONWAY.settings, eltype(arr), size(in_view))
+in, c_range = alloc(CONWAY.settings, arr) #alloc(conway_spec, arr)
+out, c_range = zeros(CONWAY.settings, eltype(arr), size(arr))
 
 print("ALLOC:\n")
 print(in)
 print("\n")
 print(out)
-print("\nVIEWS:\n")
-print(in_view)
-print("\n")
-print(out_view)
-print("\n")
+# print("\nVIEWS:\n")
+# print(in[bulk])
+# print("\n")
+# print(out[bulk])
+# print("\n")
 
-# Call kernel, can be run over a specific area by specifying lower and upper
-
-# kernel = compile_stencil(conway_spec)
-#ADDER(in)
-CONWAY(in, out)
+@time CONWAY(in, out; range=c_range)
+@time CONWAY(in, out; range=c_range)
 
 print("RESULTS:\n")
 print(in)
 print("\n")
 print(out)
-print("\nVIEWS:\n")
-print(in_view)
-print("\n")
-print(out_view)
-print("\n")
+# print("\nVIEWS:\n")
+# print(in_view)
+# print("\n")
+# print(out_view)
+# print("\n")
 
 end
