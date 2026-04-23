@@ -9,7 +9,6 @@ using StencilAbstractions
 
 # Make sure all operations are being properly compiled for GPU
 CUDA.allowscalar(false)
-CUDA.set_runtime_version!(v"12.6")
 
 @stencil function conway(A::Grid, B::Grid) 
     cnt = (A[-1, -1] + A[-1, 0] + A[-1, 1] + A[0, -1] + A[0, 1] + A[1, -1] + A[1, 0] + A[1, 1])
@@ -24,7 +23,7 @@ CUDA.set_runtime_version!(v"12.6")
     end
 end
 
-@compile_stencil(CONWAY, conway, CartesianGrid(), DefaultValue{Int32}(0), CUDABackend(), BasicSettings())
+@compile_stencil(CONWAY, conway, ArrayBacking(), Halo(), CUDABackend(), BasicSettings())
 
 function loop(in, out, t_max)
     for t in 1:t_max

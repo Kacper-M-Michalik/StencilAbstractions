@@ -13,6 +13,7 @@ function StencilAbstractions.generate_graph_loop(func, count, backend::ROCBacken
 
     base_iters = gensym(Symbol("base_iters"))
     iters = gensym(Symbol("iters"))
+    rem_iters = gensym(Symbol("rem_iters"))
     graph = gensym(Symbol("graph"))
     exec_graph = gensym(Symbol("exec"))
     index = gensym(Symbol("i"))
@@ -20,6 +21,7 @@ function StencilAbstractions.generate_graph_loop(func, count, backend::ROCBacken
     return esc(quote
         $base_iters = ($count)
         $iters = div($base_iters, $unroll_count)
+        $rem_iters = rem($base_iters, $unroll_count)
         if ($base_iters > 0)
             if ($iters > 0)
                 $graph = AMDGPU.capture() do
@@ -30,15 +32,15 @@ function StencilAbstractions.generate_graph_loop(func, count, backend::ROCBacken
                     AMDGPU.launch($exec_graph)
                 end
             end
-            
-            $graph = AMDGPU.capture() do
-                $func
-            end         
-            $exec_graph = AMDGPU.instantiate($graph)
-            for $index in 1:rem($base_iters, $unroll_count)
-                AMDGPU.launch($exec_graph)           
-            end        
-            AMDGPU.synchronize()
+            if ($rem_iters > 0)
+                $graph = AMDGPU.capture() do
+                    $func
+                end         
+                $exec_graph = AMDGPU.instantiate($graph)
+                for $index in 1:rem($base_iters, $unroll_count)
+                    AMDGPU.launch($exec_graph)           
+                end        
+            end
         end        
     end)
 end

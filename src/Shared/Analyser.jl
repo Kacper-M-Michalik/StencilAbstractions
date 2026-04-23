@@ -151,7 +151,7 @@ function process_stencil_definition(equation::Expr, mod::Module, line, file)
             if (dimensions == 0)
                 dimensions = length(indices)
             else
-                @assert length(indices) == dimensions
+                @assert length(indices) == dimensions "Index dimension mismatch inside stencil body on line $line in $file"
             end
 
             push!(input_grids, var_name)

@@ -14,6 +14,7 @@ function StencilAbstractions.generate_graph_loop(func, count, backend::CUDABacke
 
     base_iters = gensym(Symbol("base_iters"))
     iters = gensym(Symbol("iters"))
+    rem_iters = gensym(Symbol("rem_iters"))
     graph = gensym(Symbol("graph"))
     exec_graph = gensym(Symbol("exec"))
     index = gensym(Symbol("i"))
@@ -21,6 +22,7 @@ function StencilAbstractions.generate_graph_loop(func, count, backend::CUDABacke
     return esc(quote
         $base_iters = ($count)
         $iters = div($base_iters, $unroll_count)
+        $rem_iters = rem($base_iters, $unroll_count)
         if ($base_iters > 0)
             if ($iters > 0)
                 $graph = CUDA.capture() do
@@ -30,16 +32,16 @@ function StencilAbstractions.generate_graph_loop(func, count, backend::CUDABacke
                 for $index in 1:$iters
                     CUDA.launch($exec_graph)
                 end
+            end            
+            if ($rem_iters > 0)
+                $graph = CUDA.capture() do
+                    $func
+                end         
+                $exec_graph = CUDA.instantiate($graph)
+                for $index in 1:rem($base_iters, $unroll_count)
+                    CUDA.launch($exec_graph)    
+                end        
             end
-            
-            $graph = CUDA.capture() do
-                $func
-            end         
-            $exec_graph = CUDA.instantiate($graph)
-            for $index in 1:rem($base_iters, $unroll_count)
-                CUDA.launch($exec_graph)           
-            end        
-            CUDA.synchronize()
         end        
     end)
 end

@@ -76,7 +76,7 @@ function GetHaloUpperOffset(spec::StencilSpecification)
     return Tuple(offset)
 end
 
-function alloc(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, type, arr_size) 
+function alloc(spec::StencilSpecification{<:ArrayBacking, <:Any, <:Any}, type, arr_size) 
     @assert length(arr_size) == spec.stencil.dimensions    
     @assert length(spec.boundary) > 0     
 
@@ -94,7 +94,7 @@ function alloc(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, type, 
         ranges = UnitRange.(Tuple(lower_corner), upper_corner) 
       
         device_array = KernelAbstractions.allocate(spec.device, type, true_size) 
-        data = view(device_array, ranges...)
+        # data = view(device_array, ranges...)
         return device_array, ranges
     else
         device_array = KernelAbstractions.allocate(spec.device, type, arr_size) 
@@ -102,7 +102,7 @@ function alloc(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, type, 
     end
 end
 
-function alloc(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, array::AbstractArray)    
+function alloc(spec::StencilSpecification{<:ArrayBacking, <:Any, <:Any}, array::AbstractArray)    
     arr_size = size(array)
     @assert length(arr_size) == spec.stencil.dimensions 
     @assert length(spec.boundary) > 0     
@@ -118,8 +118,8 @@ function alloc(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, array:
         true_size = Tuple(temp)
         lower_corner = Tuple(offset)      
         upper_corner = lower_corner .+ arr_size .- 1     
-        ranges = UnitRange.(Tuple(lower_corner), upper_corner) 
-      
+        ranges = UnitRange.(lower_corner, upper_corner) 
+
         device_array = KernelAbstractions.zeros(spec.device, eltype(array), true_size)
         dest = view(device_array, ranges...)
         copyto!(dest, array)       
@@ -133,7 +133,7 @@ function alloc(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, array:
     return device_array
 end
 
-function Base.zeros(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, type, arr_size) 
+function Base.zeros(spec::StencilSpecification{<:ArrayBacking, <:Any, <:Any}, type, arr_size) 
     @assert length(arr_size) == spec.stencil.dimensions    
     @assert length(spec.boundary) > 0     
 
@@ -151,7 +151,7 @@ function Base.zeros(spec::StencilSpecification{<:CartesianGrid, <:Any, <:Any}, t
         ranges = UnitRange.(Tuple(lower_corner), upper_corner) 
       
         device_array = KernelAbstractions.zeros(spec.device, type, true_size) 
-        data = view(device_array, ranges...)
+        # data = view(device_array, ranges...)
         return device_array, ranges
     else
         device_array = KernelAbstractions.zeros(spec.device, type, arr_size) 

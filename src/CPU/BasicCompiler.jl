@@ -1,9 +1,8 @@
-function internal_compile_stencil(spec::StencilSpecification{CartesianGrid, B, KernelAbstractions.CPU, BasicSettings{W, T}}) where {B, W, T}
+function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, KernelAbstractions.CPU, BasicSettings{W, T}}) where {B, W, T}
 
     # Generate hygenic symbols for kernel function name, etc.
     kernel_name = gensym(Symbol(spec.stencil.name, "!"))
     caller_name = gensym(Symbol(kernel_name, "_caller"))   
-    cursor_symbol = gensym(Symbol("cursor"))
 
     # Process args
     stencil_args = Any[]
@@ -29,18 +28,18 @@ function internal_compile_stencil(spec::StencilSpecification{CartesianGrid, B, K
     for (i, grid) in enumerate(spec.stencil.ordered_grids)
         if (grid in spec.stencil.input_symbols)
             if (boundaries[i] isa Halo)
-                body = transform_read(body, grid, false, nothing, grid, cursor_symbol, nothing)
+                body = transform_read(body, grid, false, nothing, grid, _CURSOR, nothing)
             else
                 for offset in spec.stencil.sources[grid].offsets
                     var_name = gensym(Symbol(grid))         
-                    push!(gather_blocks, get_boundary_check(boundaries[i], grid, var_name, cursor_symbol, offset))
+                    push!(gather_blocks, get_boundary_check(boundaries[i], grid, var_name, _CURSOR, offset))
                     body = transform_read(body, grid, true, offset, var_name, nothing, nothing)
                 end
             end     
         end  
     end
     for output in spec.stencil.output_symbols
-        body = transform_write(body, output, output, cursor_symbol, nothing)
+        body = transform_write(body, output, output, _CURSOR, nothing)
     end 
     @assert body isa Expr
     @assert body.head === :block
@@ -61,7 +60,7 @@ function internal_compile_stencil(spec::StencilSpecification{CartesianGrid, B, K
     # Execution setup
     call_block = Expr(:block)
     if (W === RedBlack)
-        test = :((sum(($(cursor_symbol)).I) % 2) == $(_ITER_SYMBOL))
+        test = :((sum(($_CURSOR).I) % 2) == $(_ITER_SYMBOL))
         body = Expr(:if, test, body)      
         
         push!(call_block.args, :($(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), 0)))
@@ -69,7 +68,7 @@ function internal_compile_stencil(spec::StencilSpecification{CartesianGrid, B, K
 
         push!(kernel_args, _ITER_SYMBOL)
     elseif (W === MultiColour)
-        test = :($(_MASK_SYMBOL)[$(cursor_symbol)] == $(_ITER_SYMBOL))
+        test = :($(_MASK_SYMBOL)[$_CURSOR] == $(_ITER_SYMBOL))
         body = Expr(:if, test, body)     
 
         call_block = quote
@@ -85,7 +84,7 @@ function internal_compile_stencil(spec::StencilSpecification{CartesianGrid, B, K
     end
 
     #iterator = :($(cursor_symbol) = $(start_index):$(end_index))
-    iterator = :($(cursor_symbol) = CartesianIndices($(_RANGE_SYMBOL)))
+    iterator = :($_CURSOR = CartesianIndices($(_RANGE_SYMBOL)))
     loop = Expr(:for, iterator, body)
 
     # Apply optimisation flags to loop
@@ -110,16 +109,28 @@ function internal_compile_stencil(spec::StencilSpecification{CartesianGrid, B, K
     # Kernel wrapped in block by default
     generated_kernel = generated_kernel.args[2]
     
+    local range_block
+    if (boundaries[1] isa Halo)
+        lower_offset = GetHaloLowerOffset(spec)
+        upper_offset = GetHaloUpperOffset(spec)   
+        range_block = quote
+            temp = axes($(spec.stencil.ordered_grids[1]))
+            $_RANGE_SYMBOL = UnitRange.(first.(temp) .+ $lower_offset, last.(temp) .- $upper_offset)
+        end
+    else
+        range_block = quote
+            $_RANGE_SYMBOL = axes($(spec.stencil.ordered_grids[1]))
+        end
+    end
+
     kernel_caller = quote
         function $(caller_name)($(caller_args...))        
             if (length($(_RANGE_SYMBOL)) == 0)
-                $(_RANGE_SYMBOL) = axes($(spec.stencil.ordered_grids[1]))
+                $(range_block.args...)
             end
             $(call_block.args...)
         end
     end
-
-    println(generated_kernel)
 
     return CompilationResult(kernel_caller, generated_kernel, caller_name, kernel_name, spec)
 end

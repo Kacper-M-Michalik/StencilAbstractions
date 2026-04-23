@@ -3,7 +3,8 @@ struct Grid end
 
 
 abstract type Structure end
-struct CartesianGrid <: Structure end
+struct ArrayBacking <: Structure end
+struct PatchTree <: Structure end
 
 
 abstract type BoundaryType end
@@ -48,7 +49,7 @@ Base.@kwdef struct BasicSettings{W <: ProcessMode, T <: ThreadingMode} <: Comput
     processing::W = Parallel()
     
     threading::T = SingleThread()
-    default_block_size = (32,16)
+    default_block_size = ()
 end
 
 Base.@kwdef struct SpatialSettings{W <: ProcessMode, T <: ThreadingMode} <: ComputationSettings
@@ -58,18 +59,19 @@ Base.@kwdef struct SpatialSettings{W <: ProcessMode, T <: ThreadingMode} <: Comp
     processing::W = Parallel()    
 
     threading::T = SingleThread()  
+    default_tile_size = ()        
+    
     enable_shared_mem = false
-    stream_last_dim = false
-    default_tile_size = (32, 32)
+    default_block_size = ()
 end
 
 Base.@kwdef struct OverlappedSettings <: ComputationSettings
     enable_fastmath::Bool = false
     enable_bounds_checks::Bool = false    
 
-    elements_per_thread = (2)
-    block_size = (32, 8)
-    timesteps::Int = 2 
+    elements_per_thread = 0
+    block_size = ()
+    timesteps::Int = 0
 end
 
 
@@ -81,7 +83,7 @@ end
 struct StencilSource
     symbol::Symbol    
     radii::Vector{StencilDimension}
-    offsets::Vector{Vector{Int64}}
+    offsets::Vector{Vector{Int}}
 end
 
 struct StencilEquation
@@ -92,7 +94,7 @@ struct StencilEquation
     output_symbols::Array{Symbol}   
     body::Expr
     sources::Dict{Symbol, StencilSource}   
-    dimensions::Int64
+    dimensions::Int
     inplace::Bool
     unsafe::Bool
     contains_annotations::Bool
@@ -108,10 +110,10 @@ end
 # StencilSpecification(s::StencilEquation, g, b, d) = StencilSpecification(s, g, b, d, BasicSettings())
 # StencilSpecification(s::StencilEquation, g, b, d, nothing) = StencilSpecification(s, g, b, d, BasicSettings())
 StencilSpecification(s::Symbol, g, b, d) = StencilSpecification(get_stencil(Val(s)), g, b, d, BasicSettings())
-StencilSpecification(s::Symbol, g, b, d, nothing) = StencilSpecification(get_stencil(Val(s)), g, b, d, BasicSettings())
+# StencilSpecification(s::Symbol, g, b, d, nothing) = StencilSpecification(get_stencil(Val(s)), g, b, d, BasicSettings())
 StencilSpecification(s::Symbol, g, b, d, set) = StencilSpecification(get_stencil(Val(s)), g, b, d, set)
 StencilSpecification(s::Symbol, g, b::BoundaryType, d) = StencilSpecification(get_stencil(Val(s)), g, (b,), d, BasicSettings())
-StencilSpecification(s::Symbol, g, b::BoundaryType, d, nothing) = StencilSpecification(get_stencil(Val(s)), g, (b,), d, BasicSettings())
+# StencilSpecification(s::Symbol, g, b::BoundaryType, d, nothing) = StencilSpecification(get_stencil(Val(s)), g, (b,), d, BasicSettings())
 StencilSpecification(s::Symbol, g, b::BoundaryType, d, set) = StencilSpecification(get_stencil(Val(s)), g, (b,), d, set)
 
 struct CompilationResult
@@ -133,13 +135,15 @@ end
 StencilCollection(args...) = StencilCollection(Array{StencilSpecification}(args...))
 
 # TODO CLEAN UP
-const _KERNEL_END = Expr(:macrocall, Symbol("@label"), nothing, Symbol("kernel_end"))
-const _KERNEL_GOTO = Expr(:macrocall, Symbol("@goto"), nothing, Symbol("kernel_end"))
-
 const _SIZE_SYMBOL = Symbol("_RANGE")
+
+
+const _GRID_TYPE = Symbol("Grid")
+
+const _CURSOR = Symbol("_CURSOR")
 const _UPPER_BOUND = Symbol("_UPPER")
 const _LOWER_BOUND = Symbol("_LOWER")
-const _GRID_TYPE = Symbol("Grid")
+const _LAST_DIM = Symbol("_LAST_DIM")
 const _ITER_SYMBOL = Symbol("_ITER")
 
 const _RANGE_SYMBOL = Symbol("_RANGE")
