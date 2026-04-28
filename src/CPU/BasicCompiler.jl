@@ -1,23 +1,43 @@
-function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, KernelAbstractions.CPU, BasicSettings{W, T}}) where {B, W, T}
+function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, KernelAbstractions.CPU, S}) where {B, S <: BasicSettings}
 
     # Generate hygenic symbols for kernel function name, etc.
     kernel_name = gensym(Symbol(spec.stencil.name, "!"))
     caller_name = gensym(Symbol(kernel_name, "_caller"))   
 
     # Process args
-    stencil_args = Any[]
-    for arg in spec.stencil.args       
-        if (arg[2] !== nothing)
-            push!(stencil_args, Expr(:(::), arg[1], arg[2]))
-        else
-            push!(stencil_args, arg[1])            
-        end
-    end
-    caller_args = copy(stencil_args)
-    kernel_args = copy(stencil_args)
+    tuple_args = Any[]
 
-    setup_caller_args!(caller_args)
-    push!(kernel_args, _RANGE_SYMBOL)
+    caller_args = Any[]
+    stencil_args = Any[]
+    kernel_args = Any[]
+    for arg in spec.stencil.args       
+        if (arg[1] in spec.stencil.ordered_grids)
+            type = arg[2]
+            if (type === nothing)                
+                type = :(<:Any)
+            end
+            push!(caller_args, Expr(:(::), arg[1], :(Array{$type, $(spec.stencil.dimensions)})))    
+            push!(kernel_args, Expr(:(::), arg[1], :(Array{$type, $(spec.stencil.dimensions)})))       
+            push!(tuple_args, :(Array{$type, $(spec.stencil.dimensions)}))
+        else
+            if (arg[2] !== nothing)
+                push!(caller_args, Expr(:(::), arg[1], arg[2]))
+                push!(kernel_args, Expr(:(::), arg[1], arg[2]))
+                push!(tuple_args, arg[2])
+            else
+                push!(caller_args, arg[1])            
+                push!(kernel_args, arg[1])            
+                push!(tuple_args, :(<:Any))
+            end
+        end
+        push!(stencil_args, arg[1])
+    end
+
+    # push!(tuple_args, :(NTuple{$(spec.stencil.dimensions), UnitRange{Int}}))
+    # push!(tuple_args, :(NTuple{$(spec.stencil.dimensions), Int}))
+    # push!(tuple_args, :(Union{ExecutionMask, Nothing}))
+    setup_caller_args!(spec, caller_args)
+    push!(kernel_args, :($(_RANGE_SYMBOL)::NTuple{$(spec.stencil.dimensions), UnitRange{Int}}))
 
     # Check/get valid boundaries
     boundaries = get_boundaries(spec)
@@ -59,17 +79,17 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, Ke
     
     # Execution setup
     call_block = Expr(:block)
-    if (W === RedBlack)
+    if (spec.settings.processing isa RedBlack)
         test = :((sum(($_CURSOR).I) % 2) == $(_ITER_SYMBOL))
-        body = Expr(:if, test, body)      
+        body = Expr(:block, Expr(:if, test, body))
         
         push!(call_block.args, :($(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), 0)))
         push!(call_block.args, :($(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), 1)))
 
         push!(kernel_args, _ITER_SYMBOL)
-    elseif (W === MultiColour)
+    elseif (spec.settings.processing isa MultiColour)
         test = :($(_MASK_SYMBOL)[$_CURSOR] == $(_ITER_SYMBOL))
-        body = Expr(:if, test, body)     
+        body = Expr(:block, Expr(:if, test, body))     
 
         call_block = quote
             for iter in 1:mask.colours
@@ -83,22 +103,30 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, Ke
         push!(call_block.args, :($(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL))))
     end
 
-    #iterator = :($(cursor_symbol) = $(start_index):$(end_index))
-    iterator = :($_CURSOR = CartesianIndices($(_RANGE_SYMBOL)))
-    loop = Expr(:for, iterator, body)
-
     # Apply optimisation flags to loop
-    if (spec.settings.enable_simd)
-        # simd
-        loop = Expr(:macrocall, Symbol("@simd"), nothing, loop)
-    end    
+    # if (spec.settings.enable_simd)
+    #     # simd
+    #     body = Expr(:macrocall, Symbol("@simd"), nothing, body)
+    # end    
     if (!spec.settings.enable_bounds_checks)
         # inbounds
-        loop = Expr(:macrocall, Symbol("@inbounds"), nothing, loop)
+        body = Expr(:macrocall, Symbol("@inbounds"), nothing, body)
     end    
     if (spec.settings.enable_fastmath)
         # fastmath
-        loop = Expr(:macrocall, Symbol("@fastmath"), nothing, loop)
+        body = Expr(:macrocall, Symbol("@fastmath"), nothing, body)
+    end    
+    
+    iterator = :($_CURSOR = CartesianIndices($(_RANGE_SYMBOL)))    
+    loop = Expr(:for, iterator, Expr(:block, body))
+
+    if (spec.settings.threading isa JuliaThreads)
+        handle = Expr(:(.), Symbol("Threads"), QuoteNode(Symbol("@threads")))
+        loop = Expr(:macrocall, handle, nothing, QuoteNode(:(static)), loop)
+    elseif (spec.settings.threading isa PolyesterThreads)
+        if (spec.stencil.contains_annotations) error("Stencil cannot contain type annotations when compiling with PolyesterThreads (Polyester throws errors)!") end
+        handle = Expr(:(.), Symbol("Polyester"), QuoteNode(Symbol("@batch")))
+        loop = Expr(:macrocall, handle, nothing, loop)
     end    
 
     generated_kernel = quote        
@@ -111,8 +139,8 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, Ke
     
     local range_block
     if (boundaries[1] isa Halo)
-        lower_offset = GetHaloLowerOffset(spec)
-        upper_offset = GetHaloUpperOffset(spec)   
+        lower_offset = calc_halo_lower_offset(spec)
+        upper_offset = calc_halo_upper_offset(spec)   
         range_block = quote
             temp = axes($(spec.stencil.ordered_grids[1]))
             $_RANGE_SYMBOL = UnitRange.(first.(temp) .+ $lower_offset, last.(temp) .- $upper_offset)
@@ -125,7 +153,7 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, Ke
 
     kernel_caller = quote
         function $(caller_name)($(caller_args...))        
-            if (length($(_RANGE_SYMBOL)) == 0)
+            if (($_RANGE_SYMBOL) === nothing)
                 $(range_block.args...)
             end
             $(call_block.args...)
@@ -134,42 +162,3 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, Ke
 
     return CompilationResult(kernel_caller, generated_kernel, caller_name, kernel_name, spec)
 end
-
-#     threads = Threads.nthreads()
-#     partionperthread = dim/threads
-#     @threads for id in 0:(threads-1)
-#         lower = base + id * partionperthread
-#         upper = min(lower + partionperthread - 1, dimupper)
-#         range = range[same, lower:upper]
-#         $(loop)
-#   $(step) = cld($(_SIZE_SYMBOL)[1], $(_THREADS_SYMBOL))
-#             Polyester.@batch for $(id_symbol) = 0:($(_THREADS_SYMBOL)-1)
-#                 # Range calculations                    
-#                 $(rng_low) =  $(_LOWER_BOUND)[1] + $(step)*$(id_symbol)
-#                 $(rng_high) = min($(rng_low)+$(step)-1, $(_UPPER_BOUND)[1])
-#                 $(start_index) = CartesianIndex($(rng_low), $(lower_access...))
-#                 $(end_index) = CartesianIndex($(rng_high), $(upper_access...))
-#                 # Main loop
-#                 $(loop)
-#             end   
-    # Generate iteration domain calculations  
-    # lower_access = Any[]
-    # upper_access = Any[]
-    # for i in 2:spec.stencil.dimensions
-    #     push!(lower_access, :($(_LOWER_BOUND)[$(i)]))
-    #     push!(upper_access, :($(_UPPER_BOUND)[$(i)]))
-    # end  
-    # start_index = gensym(Symbol("start"))
-    # end_index = gensym(Symbol("end"))        
-    # step = gensym(Symbol("step"))
-    # rng_low = gensym(Symbol("lower"))
-    # rng_high = gensym(Symbol("high"))     
-
-    # if (spec.settings.threading isa JuliaThreads)
-    #     handle = Expr(:(.), Symbol("Threads"), QuoteNode(Symbol("@threads")))
-    #     loop = Expr(:macrocall, handle, nothing, loop)
-    # elseif (spec.settings.threading isa PolyesterThreads)
-    #     if (spec.stencil.contains_annotations) error("Stencil cannot contain type annotations when compiling with PolyesterThreads (Polyester throws errors)!") end
-    #     handle = Expr(:(.), Symbol("Polyester"), QuoteNode(Symbol("@batch")))
-    #     loop = Expr(:macrocall, handle, nothing, loop)
-    # end

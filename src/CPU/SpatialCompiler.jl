@@ -1,26 +1,39 @@
-function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, KernelAbstractions.CPU, SpatialSettings{W, T}}) where {B, W, T}
+function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, KernelAbstractions.CPU, S}) where {B, S <: SpatialSettings}
 
     # Generate hygenic symbols for kernel function name, etc.
     kernel_name = gensym(Symbol(spec.stencil.name, "!"))
     caller_name = gensym(Symbol(kernel_name, "_caller"))   
+    # Symbol(spec.stencil.name, "!") #
 
     # Process args
+    caller_args = Any[]
     stencil_args = Any[]
+    kernel_args = Any[]
     for arg in spec.stencil.args       
-        if (arg[2] !== nothing)
-            push!(stencil_args, Expr(:(::), arg[1], arg[2]))
+        if (arg[1] in spec.stencil.ordered_grids)
+            type = arg[2]
+            if (type === nothing)                
+                type = :(<:Any)
+            end
+            push!(caller_args, Expr(:(::), arg[1], :(Array{$type, $(spec.stencil.dimensions)})))    
+            push!(kernel_args, Expr(:(::), arg[1], :(Array{$type, $(spec.stencil.dimensions)})))       
         else
-            push!(stencil_args, arg[1])            
+            if (arg[2] !== nothing)
+                push!(caller_args, Expr(:(::), arg[1], arg[2]))
+                push!(kernel_args, Expr(:(::), arg[1], arg[2]))
+            else
+                push!(caller_args, arg[1])            
+                push!(kernel_args, arg[1])            
+            end
         end
+        push!(stencil_args, arg[1])
     end
-    caller_args = copy(stencil_args)
-    kernel_args = copy(stencil_args)
 
-    setup_caller_args!(caller_args)
-    push!(kernel_args, _RANGE_SYMBOL)
-    push!(kernel_args, _BLOCK_SYMBOL)
-    push!(kernel_args, _LOWER_BOUND)
-    push!(kernel_args, _UPPER_BOUND)
+    setup_caller_args!(spec, caller_args)
+    push!(kernel_args, :($(_RANGE_SYMBOL)::NTuple{$(spec.stencil.dimensions), Int}))
+    push!(kernel_args, :($(_BLOCK_SYMBOL)::NTuple{$(spec.stencil.dimensions), Int}))
+    push!(kernel_args, :($(_LOWER_BOUND)::NTuple{$(spec.stencil.dimensions), Int}))
+    push!(kernel_args, :($(_UPPER_BOUND)::NTuple{$(spec.stencil.dimensions), Int}))
 
     # Check/get valid boundaries
     boundaries = get_boundaries(spec)
@@ -62,7 +75,7 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, Ke
     
     # Execution setup
     call_block = Expr(:block)
-    if (W === RedBlack)
+    if (spec.settings.processing isa RedBlack)
         test = :((sum(($_CURSOR).I) % 2) == $(_ITER_SYMBOL))
         body = Expr(:if, test, body)      
         
@@ -70,7 +83,7 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, Ke
         push!(call_block.args, :($(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), $(_BLOCK_SYMBOL), $(_LOWER_BOUND), $(_UPPER_BOUND), 1)))
 
         push!(kernel_args, _ITER_SYMBOL)
-    elseif (W === MultiColour)
+    elseif (spec.settings.processing isa MultiColour)
         test = :($(_MASK_SYMBOL)[$_CURSOR] == $(_ITER_SYMBOL))
         body = Expr(:if, test, body)     
 
@@ -113,12 +126,12 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, Ke
         $(upper_loc) = CartesianIndex(min.($(base_loc).I .+ $_BLOCK_SYMBOL .- 1, $_UPPER_BOUND))        
         $(loop)
     end
-    tile_iterator = :($tile_id = $_RANGE_SYMBOL)
+    tile_iterator = :($tile_id = CartesianIndices($_RANGE_SYMBOL))
     tile_loop = Expr(:for, tile_iterator, tile_body)
 
     if (spec.settings.threading isa JuliaThreads)
         handle = Expr(:(.), Symbol("Threads"), QuoteNode(Symbol("@threads")))
-        tile_loop = Expr(:macrocall, handle, nothing, tile_loop)
+        tile_loop = Expr(:macrocall, handle, nothing, QuoteNode(:(static)), tile_loop)
     elseif (spec.settings.threading isa PolyesterThreads)
         if (spec.stencil.contains_annotations) error("Stencil cannot contain type annotations when compiling with PolyesterThreads (Polyester throws errors)!") end
         handle = Expr(:(.), Symbol("Polyester"), QuoteNode(Symbol("@batch")))
@@ -134,8 +147,8 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, Ke
     
     local range_block
     if (boundaries[1] isa Halo)
-        lower_offset = GetHaloLowerOffset(spec)
-        upper_offset = GetHaloUpperOffset(spec)   
+        lower_offset = calc_halo_lower_offset(spec)
+        upper_offset = calc_halo_upper_offset(spec)   
         range_block = quote
             temp = axes($(spec.stencil.ordered_grids[1]))
             $_RANGE_SYMBOL = UnitRange.(first.(temp) .+ $lower_offset, last.(temp) .- $upper_offset)
@@ -147,17 +160,17 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, Ke
     end
 
     kernel_caller = quote
-        function $(caller_name)($(caller_args...))        
-            if (length($_RANGE_SYMBOL) == 0)
+        function $(caller_name)($(caller_args...))       
+            if (($_RANGE_SYMBOL) === nothing)
                 $(range_block.args...)
             end
-            if (length($_BLOCK_SYMBOL) == 0)
+            if (($_BLOCK_SYMBOL) === nothing)
                 $_BLOCK_SYMBOL = $(spec.settings.default_tile_size)
             end
 
             $_LOWER_BOUND = first.($_RANGE_SYMBOL)
             $_UPPER_BOUND = last.($_RANGE_SYMBOL)          
-            $_RANGE_SYMBOL = CartesianIndices(cld.($_UPPER_BOUND .- $_LOWER_BOUND .+ 1, $_BLOCK_SYMBOL))
+            $_RANGE_SYMBOL = cld.($_UPPER_BOUND .- $_LOWER_BOUND .+ 1, $_BLOCK_SYMBOL)
 
             $(call_block.args...)
         end

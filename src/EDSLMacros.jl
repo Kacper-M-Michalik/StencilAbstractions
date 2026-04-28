@@ -45,54 +45,20 @@ macro cross(grid, n, r)
 
     accesses = Set{Expr}()
     for dim in 1:n
-        println(dim)
         index = zeros(Int, 1, n)
         for offset in (-r):(r)
             index[dim] = offset
             push!(accesses, Expr(:ref, grid, Tuple(index)))
-            println(Tuple(index))
         end
     end    
     return esc(Expr(:call, :SVector, collect(accesses)...))
 end
 
-# macro skewed_cross(grid, n, r)
-#     mod == __module__
-#     if !(n isa Int)
-#         if (isdefined(mod, n) && isconst(mod, n)) 
-#             n = getfield(mod, n) 
-#         end
-#         if !(n isa Int)
-#             error("Macro skewed_cross, value n must be an Integer or const Integer")
-#         end
-#     end
-#     if !(r isa Int)
-#         if (isdefined(mod, r) && isconst(mod, r)) 
-#             r = getfield(mod, r) 
-#         end
-#         if !(r isa Int)
-#             error("Macro skewed_cross, value r must be an Integer or const Integer")
-#         end
-#     end    
-
-#     accesses = Set{Expr}()
-#     for dim in 1:n
-#         println(dim)
-#         index = zeros(Int, 1, n)
-#         for offset in (-r):(r)
-#             index[dim] = offset
-#             push!(accesses, Expr(:ref, grid, Tuple(index)))
-#             println(Tuple(index))
-#         end
-#     end    
-#     return esc(Expr(:call, :SVector, collect(accesses)...))
-# end
-
-
-macro stencil(equation)          
+macro stencil(equation)    
     stencil = process_stencil_definition(equation, __module__, __source__.line, __source__.file)
 
-    return quote    
-        StencilAbstractions.get_stencil(::Val{$(QuoteNode(stencil.name))}) = $stencil
-    end
+    return esc(quote    
+        const $(stencil.name) = $stencil
+        # get_stencil(::Val{$(QuoteNode(stencil.name))}) = $stencil
+    end)
 end

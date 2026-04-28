@@ -52,7 +52,7 @@ test_size = (200, 200)
 for i in 1:samples
     init = Int32.(rand(Bool, test_size))
     in1, in_view = alloc(CONWAY.settings, init) 
-    out1, out_view = zeros(CONWAY.settings, eltype(init), size(in_view))
+    out1, out_view = zeros(CONWAY.settings, eltype(init), size(init))
     in2 = copy(in1)
     out2 = copy(out1)
     loop(in1, out1, t)

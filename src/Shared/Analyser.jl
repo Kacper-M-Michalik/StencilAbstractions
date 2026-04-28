@@ -1,7 +1,7 @@
 
 function inline_body(mod::Module, node)
     if (node isa Symbol)
-        if (isdefined(mod, node) && isconst(mod, node)) return getfield(mod, node) end
+        #if (isdefined(mod, node) && isconst(mod, node) && isbits(getfield(mod, node))) return getfield(mod, node) end
         return node
     elseif (node isa Expr)
         args = Any[]
@@ -42,21 +42,30 @@ end
 function process_args(signature)
     stencil_args = Tuple{Symbol, Union{Symbol, Nothing}}[]    
     grids = Symbol[]    
-    # first_grid_index = 0
 
     # Verify function args are all symbols
     for (i, arg) in enumerate(signature.args[2:end])
         if (arg isa Expr && arg.head === :(::))
             @assert length(arg.args) == 2
-            if (arg.args[2] == _GRID_TYPE)
-                # if (first_grid_index == 0)
-                #     first_grid_index = i
-                # end
-
-                push!(stencil_args, (arg.args[1], nothing))
-                push!(grids, arg.args[1])
+            # Type annotation with curly for type specialisation
+            if (arg.args[2] isa Expr)
+                base_type = arg.args[2].args[1]
+                if (base_type == _GRID_TYPE)
+                    @assert length(arg.args[2].args) == 2
+                    push!(grids, arg.args[1])
+                    # Get only field type symbol not whole expr
+                    push!(stencil_args, (arg.args[1], arg.args[2].args[2]))
+                else               
+                    push!(stencil_args, (arg.args[1], arg.args[2]))
+                end
             else
-                push!(stencil_args, (arg.args[1], arg.args[2]))
+            # Just regular type annotation
+                if (arg.args[2] == _GRID_TYPE)  
+                    push!(stencil_args, (arg.args[1], nothing))
+                    push!(grids, arg.args[1])
+                else
+                    push!(stencil_args, (arg.args[1], arg.args[2]))
+                end
             end
         elseif (arg isa Symbol)
             push!(stencil_args, (arg, nothing))
@@ -65,7 +74,7 @@ function process_args(signature)
         end
     end
 
-    return stencil_args, grids #, first_grid_index
+    return stencil_args, grids
 end
 
 function process_stencil_definition(equation::Expr, mod::Module, line, file)

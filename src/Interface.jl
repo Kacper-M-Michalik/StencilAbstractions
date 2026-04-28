@@ -48,7 +48,7 @@ function GetMaximalHaloSizes(spec::StencilSpecification)
     return halos
 end
 
-function GetHaloLowerOffset(spec::StencilSpecification)
+function calc_halo_lower_offset(spec::StencilSpecification)
     offset = zeros(Int, spec.stencil.dimensions)
 
     for source in values(spec.stencil.sources)
@@ -62,7 +62,7 @@ function GetHaloLowerOffset(spec::StencilSpecification)
     return Tuple(offset)
 end
 
-function GetHaloUpperOffset(spec::StencilSpecification)
+function calc_halo_upper_offset(spec::StencilSpecification)
     offset = zeros(Int, spec.stencil.dimensions)
 
     for source in values(spec.stencil.sources)
@@ -76,7 +76,7 @@ function GetHaloUpperOffset(spec::StencilSpecification)
     return Tuple(offset)
 end
 
-function alloc(spec::StencilSpecification{<:ArrayBacking, <:Any, <:Any}, type, arr_size) 
+function alloc(spec::StencilSpecification{<:Any, <:ArrayBacking, <:Any, <:Any}, type, arr_size)
     @assert length(arr_size) == spec.stencil.dimensions    
     @assert length(spec.boundary) > 0     
 
@@ -102,7 +102,7 @@ function alloc(spec::StencilSpecification{<:ArrayBacking, <:Any, <:Any}, type, a
     end
 end
 
-function alloc(spec::StencilSpecification{<:ArrayBacking, <:Any, <:Any}, array::AbstractArray)    
+function alloc(spec::StencilSpecification{<:Any, <:ArrayBacking, <:Any, <:Any}, array::AbstractArray)    
     arr_size = size(array)
     @assert length(arr_size) == spec.stencil.dimensions 
     @assert length(spec.boundary) > 0     
@@ -133,7 +133,7 @@ function alloc(spec::StencilSpecification{<:ArrayBacking, <:Any, <:Any}, array::
     return device_array
 end
 
-function Base.zeros(spec::StencilSpecification{<:ArrayBacking, <:Any, <:Any}, type, arr_size) 
+function Base.zeros(spec::StencilSpecification{<:Any, <:ArrayBacking, <:Any, <:Any}, type, arr_size) 
     @assert length(arr_size) == spec.stencil.dimensions    
     @assert length(spec.boundary) > 0     
 
@@ -159,63 +159,117 @@ function Base.zeros(spec::StencilSpecification{<:ArrayBacking, <:Any, <:Any}, ty
     end
 end
 
-function (stencil::CompiledStencil)(args...; range=(), block_size=(), mask=nothing)
-    stencil.kernel(args..., range, block_size, mask)
-end
+# function (stencil::CompiledStencil{K, N})(args...; 
+#     range::NTuple{N, UnitRange{Int}} = ntuple(i->(0:0), Val(N)), 
+#     block_size::NTuple{N, Int} = ntuple(i->0, Val(N)), 
+#     mask::Union{ExecutionMask, Nothing} = nothing
+#     ) where {K, N}
+    
+#     #println("callable body")
+#     stencil.kernel(args..., range, block_size, mask)
+# end
+# function (stencil::CompiledStencil{K, N})(args...; 
+#     range::NTuple{N, UnitRange{Int}} = ntuple(i->(0:0), Val(N)), 
+#     block_size::NTuple{N, Int} = ntuple(i->0, Val(N)), 
+#     mask::Union{ExecutionMask, Nothing} = nothing
+#     ) where {K, N}
+    
+#     stencil.kernel(args, range, block_size, mask)
+# end
 
 function generate_graph_loop(func, count, backend, unroll_count)
     error("Unknown Backend for graph loop!")
 end
 
-function get_stencil(::Val) 
-    return nothing
-end
-
 macro compile_stencil(vars...)
-    if (length(vars) == 5 || length(vars) == 6)
-        equation = StencilAbstractions.get_stencil(Val(vars[2]))
-        
-        if (equation !== nothing)
-            structure = Core.eval(__module__, vars[3])
-            boundary = Core.eval(__module__, vars[4])
-            if !(boundary isa Tuple) boundary = (boundary,) end
-            backend = Core.eval(__module__, vars[5])
-            settings = nothing            
-            if (length(vars) == 6)
-                settings = Core.eval(__module__, vars[6])
-            end            
+    if (length(vars) == 5 || length(vars) == 6)      
 
-            spec = StencilSpecification(equation, structure, boundary, backend, settings)
-            result = internal_compile_stencil(spec)
+        # local target_module
+        # local target_symbol 
+        # if (vars[2] isa Expr)
+        #     target = vars[2]
+        #     @assert target.head === :(.)
+        #     @assert target.args[2] isa QuoteNode
+        #     try
+        #         target_module = Core.eval(__module__, target.args[1])
+        #     catch
+        #         error("Unknown module in @compile_stencil line $(__source__.line) in $(__source__.file)")
+        #     end
+        #     target_symbol = target.args[2].value           
+        # elseif (vars[2] isa Symbol)
+        #     target_module = __module__
+        #     target_symbol = vars[2]
+        # else
+        #     error("Could not parse stencil function reference")
+        # end           
+        # obj_names = names(target_module, all=true)
+        # for name in obj_names
+        #     println(name)
+        #     if (name === target_symbol && isdefined(target_module, name) && getfield(target_module, name) isa Function)
+        #         found_stencil = true
+        #         break
+        #     end
+        # end
+            # equation = Core.eval(target_module, :(get_stencil(Val($(QuoteNode(target_symbol)))))) 
 
-            # Fix escaping
-            return esc(quote
-                $(result.caller)
+        local equation
+        try
+            equation = Core.eval(__module__, vars[2])    
+            if !(equation isa StencilEquation)
+                error()
+            end
+        catch
+            error("Could not find/retreive stencil definition on $(__source__.line) in $(__source__.file)")
+        end          
 
+        name = vars[1]
+        structure = Core.eval(__module__, vars[3])
+        boundary = Core.eval(__module__, vars[4])
+        if !(boundary isa Tuple) boundary = (boundary,) end
+        backend = Core.eval(__module__, vars[5])
+        settings = nothing            
+        if (length(vars) == 6)
+            settings = Core.eval(__module__, vars[6])
+        end            
+
+        spec = StencilSpecification(name, equation, structure, boundary, backend, settings)
+        result = internal_compile_stencil(spec)
+
+        if (false)
+            println(quote
                 $(result.kernel)
 
-                $(vars[1]) = StencilAbstractions.CompiledStencil($(result.caller_name), $(spec))
+                $(result.caller)
+                
+                const $name = StencilAbstractions.CompiledStencil{typeof($(result.caller_name)), $(spec.stencil.dimensions), typeof($(spec))}($(result.caller_name), $(spec))
             end)
-        else
-            error("Stencil with this name does not exist!")
         end
+
+        return esc(quote
+            $(result.kernel)
+
+            $(result.caller)
+
+            #const $(vars[1]) = StencilAbstractions.CompiledStencil{typeof($(result.caller_name))}($(result.caller_name))
+            const $name = StencilAbstractions.CompiledStencil{typeof($(result.caller_name)), $(spec.stencil.dimensions), typeof($(spec))}($(result.caller_name), $(spec))
+        end)       
     else
         error("Invalid args in @compile_stencil call!")
     end
 end
 
-function compile_stencil(spec::StencilSpecification)
+function compile_stencil(mod::Module, spec::StencilSpecification)
     result = internal_compile_stencil(spec)
-    # Fix escaping
-    func = eval(quote
-        $(result.caller)
 
+    callable = Core.eval(mod, quote
         $(result.kernel)
 
-        StencilAbstractions.CompiledStencil($(result.caller_name), $(spec))
+        $(result.caller)
+
+        StencilAbstractions.CompiledStencil{typeof($(result.caller_name)), $(spec.stencil.dimensions), typeof($(spec))}($(result.caller_name), $(spec))
     end)
 
-    return func
+    return callable
 end
 
 macro iter(vars...)
@@ -223,7 +277,7 @@ macro iter(vars...)
 
     func = vars[1]
     count = vars[2]
-    backend = vars[3]
+    backend = Core.eval(__module__, vars[3])
     unroll_count = length(vars) == 4 ? vars[4] : 1
 
     @assert func.head === :(->)
@@ -234,12 +288,8 @@ macro iter(vars...)
         elseif !(arg isa LineNumberNode)
             error("Only stencil calls are allowed in an @iter block!")
         end
-    end
-    
+    end    
     @assert count isa Expr || count isa Symbol || count isa Int "@iter requries count be an Expr, Variable or Int!"
-
-    @assert backend isa Expr && backend.head === :call "@iter requries a backend instance!"
-
     @assert unroll_count isa Int
 
     backend_obj = Core.eval(__module__, backend)

@@ -1,7 +1,13 @@
-function setup_caller_args!(args)
-    push!(args, _RANGE_SYMBOL)
-    push!(args, _BLOCK_SYMBOL)
-    push!(args, _MASK_SYMBOL)
+# function setup_caller_args!(spec, args)
+#     push!(args, :($(_RANGE_SYMBOL)::NTuple{$(spec.stencil.dimensions), UnitRange{Int}}))
+#     push!(args, :($(_BLOCK_SYMBOL)::NTuple{$(spec.stencil.dimensions), Int}))
+#     push!(args, :(($_MASK_SYMBOL)::Union{ExecutionMask, Nothing}))
+# end
+
+function setup_caller_args!(spec, args)
+    push!(args, :($(_RANGE_SYMBOL)::Union{NTuple{$(spec.stencil.dimensions), UnitRange{Int}}, Nothing}))
+    push!(args, :($(_BLOCK_SYMBOL)::Union{NTuple{$(spec.stencil.dimensions), Int}, Nothing}))
+    push!(args, :(($_MASK_SYMBOL)::Union{ExecutionMask, Nothing}))
 end
 
 function get_boundaries(spec::StencilSpecification)

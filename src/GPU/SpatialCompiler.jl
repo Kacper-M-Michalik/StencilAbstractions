@@ -2,33 +2,51 @@
 # 1. Replace returns
 # 2. Replace input refs
 # 3. Generate distribution/dispatch methods
-function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, D, SpatialSettings{W, T}}) where {B, D <: KernelAbstractions.GPU, W, T}
+function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D, S}) where {B, D <: KernelAbstractions.GPU, S <: SpatialSettings}
 
     # Generate hygenic symbols for kernel function name, etc.
-    kernel_name = gensym(Symbol(spec.stencil.name, "!"))
-    caller_name = gensym(Symbol(kernel_name, "_caller"))   
+    name = gensym(spec.name)
+    kernel_name = Symbol(name, "_kernel")
+    caller_name = Symbol(name, "_caller")
+    specialised_kernel = Symbol(name, "_spc")
+    block_size = spec.settings.default_block_size
 
     # Process args   
-    kernel_args = Any[]    
+    caller_args = Any[]
     stencil_args = Any[]
-    for arg in spec.stencil.args
-        if (in(arg[1], spec.stencil.input_symbols) && !in(arg[1], spec.stencil.output_symbols))           
-            push!(kernel_args, Expr(:macrocall, Symbol("@Const"), nothing, arg[1]))
-            push!(stencil_args, arg[1])
-        elseif (!in(arg[1], spec.stencil.input_symbols) && !in(arg[1], spec.stencil.output_symbols) && arg[2] !== nothing)
-            push!(kernel_args, Expr(:(::), arg[1], arg[2]))
-            push!(stencil_args, Expr(:(::), arg[1], arg[2]))
+    kernel_args = Any[]
+    for arg in spec.stencil.args       
+        if (arg[1] in spec.stencil.ordered_grids)
+            type = arg[2]
+            if (type === nothing)                
+                type = :(<:Any)
+            end
+            push!(caller_args, Expr(:(::), arg[1], :(CuArray{$type, $(spec.stencil.dimensions)})))      
+            
+            if (in(arg[1], spec.stencil.input_symbols) && !in(arg[1], spec.stencil.output_symbols))      
+                push!(kernel_args, Expr(:macrocall, Symbol("@Const"), nothing, arg[1]))
+            else               
+                push!(kernel_args, arg[1])# Expr(:(::), arg[1], :(AbstractArray{$type, $(spec.stencil.dimensions)})))     
+            end        
         else
-            push!(kernel_args, arg[1])            
-            push!(stencil_args, arg[1])
+            if (arg[2] !== nothing)
+                push!(caller_args, Expr(:(::), arg[1], arg[2]))
+                push!(kernel_args, Expr(:(::), arg[1], arg[2]))
+            else
+                push!(caller_args, arg[1])            
+                push!(kernel_args, arg[1])            
+            end
         end
-    end        
-    caller_args = copy(stencil_args)
-    setup_caller_args!(caller_args)
-    
-    push!(kernel_args, _LOWER_BOUND)
-    push!(kernel_args, _UPPER_BOUND)
-    push!(kernel_args, _LAST_DIM)
+        push!(stencil_args, arg[1])
+    end
+
+    setup_caller_args!(spec, caller_args)    
+    # push!(kernel_args, _LOWER_BOUND)
+    # push!(kernel_args, _UPPER_BOUND)
+    # push!(kernel_args, _LAST_DIM)
+    push!(kernel_args, :($(_LOWER_BOUND)::NTuple{$(spec.stencil.dimensions - 1), Int}))
+    push!(kernel_args, :($(_UPPER_BOUND)::NTuple{$(spec.stencil.dimensions - 1), Int}))
+    push!(kernel_args, :(($_LAST_DIM)::UnitRange{Int}))
 
     # Check/get valid boundaries
     boundaries = get_boundaries(spec)
@@ -70,7 +88,7 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, D,
     
     # Execution setup
     call_block = Expr(:block)
-    if (W === RedBlack)
+    if (spec.settings.processing isa RedBlack)
         test = :((sum(($_CURSOR).I) % 2) == $(_ITER_SYMBOL))
         body = Expr(:if, test, body)      
         
@@ -78,7 +96,7 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, D,
         push!(call_block.args, :($(kernel_name)($(spec.device), $_BLOCK_SYMBOL)($(stencil_args...), $_LOWER_BOUND, $_UPPER_BOUND, $_LAST_DIM, 1; ndrange=$_RANGE_SYMBOL)))
 
         push!(kernel_args, _ITER_SYMBOL)
-    elseif (W === MultiColour)
+    elseif (spec.settings.processing isa RedBlack)
         test = :($(_MASK_SYMBOL)[$_CURSOR] == $(_ITER_SYMBOL))
         body = Expr(:if, test, body)     
 
@@ -91,7 +109,7 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, D,
         push!(kernel_args, _ITER_SYMBOL)
         push!(kernel_args, _MASK_SYMBOL)
     else
-        push!(call_block.args, :($(kernel_name)($(spec.device), $_BLOCK_SYMBOL)($(stencil_args...), $_LOWER_BOUND, $_UPPER_BOUND, $_LAST_DIM; ndrange=$_RANGE_SYMBOL)))
+        push!(call_block.args, :($(specialised_kernel)($(stencil_args...), $_LOWER_BOUND, $_UPPER_BOUND, $_LAST_DIM; ndrange=$_RANGE_SYMBOL)))
     end
 
     # Apply optimisation flags to loop    
@@ -118,14 +136,14 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, D,
                     $body
                 end
             end 
-        end        
+        end
     end
     generated_kernel = generated_kernel.args[2]
     
     local range_block
     if (boundaries[1] isa Halo)
-        lower_offset = GetHaloLowerOffset(spec)
-        upper_offset = GetHaloUpperOffset(spec)   
+        lower_offset = calc_halo_lower_offset(spec)
+        upper_offset = calc_halo_upper_offset(spec)   
         range_block = quote
             temp = axes($(spec.stencil.ordered_grids[1]))
             $_RANGE_SYMBOL = UnitRange.(first.(temp) .+ $lower_offset, last.(temp) .- $upper_offset)
@@ -137,11 +155,12 @@ function internal_compile_stencil(spec::StencilSpecification{ArrayBacking, B, D,
     end
 
     kernel_caller = quote
+        $specialised_kernel = $(kernel_name)($(spec.device), $block_size)
         function $(caller_name)($(caller_args...))        
-            if (length($(_RANGE_SYMBOL)) == 0)
+            if (($_RANGE_SYMBOL) === nothing)
                 $(range_block.args...)
             end
-            if (length($_BLOCK_SYMBOL) == 0)
+            if (($_BLOCK_SYMBOL) === nothing)
                 $_BLOCK_SYMBOL = $(spec.settings.default_block_size)
             end
 

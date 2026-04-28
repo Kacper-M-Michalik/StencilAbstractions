@@ -5,7 +5,7 @@ using KernelAbstractions
 using StaticArrays
 
 export
-    @stencil, @compile_stencil, compile_stencil, alloc, generate_mask,
+    @stencil, @compile_stencil, compile_stencil, alloc, generate_mask, calc_halo_upper_offset, calc_halo_lower_offset,
     @iter,
     @box, @cross,
     CompiledStencil, StencilSpecification, StencilEquation,     
