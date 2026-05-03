@@ -65,7 +65,7 @@ function transform_write(node, old::Symbol, new::Symbol, cursor_symbol, cursor_o
 
     # Process assignment to output
     if (node.head === :(=) && node.args[1] isa Symbol && node.args[1] == old)
-        @assert length(node.args) == 2          
+        @assert length(node.args) == 2
 
         assign_ref = new
         if (cursor_symbol !== nothing)

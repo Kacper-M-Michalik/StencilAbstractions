@@ -92,7 +92,7 @@ function process_stencil_definition(equation::Expr, mod::Module, line, file)
     stencil_args, grids = process_args(equation.args[1])
 
     # Expand macros and inline consts to allow for proper parsing of body    
-    body = macroexpand(mod, body)
+    body = macroexpand(mod, body; recursive=true)
     body = inline_body(mod, body)     
 
     # Verify valid definition   

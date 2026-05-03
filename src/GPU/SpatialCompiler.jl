@@ -8,8 +8,8 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
     name = gensym(spec.name)
     kernel_name = Symbol(name, "_kernel")
     caller_name = Symbol(name, "_caller")
-    specialised_kernel = Symbol(name, "_spc")
-    block_size = spec.settings.default_block_size
+    #specialised_kernel = Symbol(name, "_spc")
+    #block_size = spec.settings.default_block_size
 
     # Process args   
     caller_args = Any[]
@@ -21,7 +21,7 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
             if (type === nothing)                
                 type = :(<:Any)
             end
-            push!(caller_args, Expr(:(::), arg[1], :(CuArray{$type, $(spec.stencil.dimensions)})))      
+            push!(caller_args, Expr(:(::), arg[1], :(AbstractArray{$type, $(spec.stencil.dimensions)})))      
             
             if (in(arg[1], spec.stencil.input_symbols) && !in(arg[1], spec.stencil.output_symbols))      
                 push!(kernel_args, Expr(:macrocall, Symbol("@Const"), nothing, arg[1]))
@@ -109,7 +109,7 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
         push!(kernel_args, _ITER_SYMBOL)
         push!(kernel_args, _MASK_SYMBOL)
     else
-        push!(call_block.args, :($(specialised_kernel)($(stencil_args...), $_LOWER_BOUND, $_UPPER_BOUND, $_LAST_DIM; ndrange=$_RANGE_SYMBOL)))
+        push!(call_block.args, :($(kernel_name)($(spec.device), $_BLOCK_SYMBOL)($(stencil_args...), $_LOWER_BOUND, $_UPPER_BOUND, $_LAST_DIM; ndrange=$_RANGE_SYMBOL)))
     end
 
     # Apply optimisation flags to loop    
@@ -155,7 +155,7 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
     end
 
     kernel_caller = quote
-        $specialised_kernel = $(kernel_name)($(spec.device), $block_size)
+        #$specialised_kernel = $(kernel_name)($(spec.device), $block_size)
         function $(caller_name)($(caller_args...))        
             if (($_RANGE_SYMBOL) === nothing)
                 $(range_block.args...)
@@ -167,8 +167,13 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
             $_LOWER_BOUND = first.(Base.front($_RANGE_SYMBOL)) .- 1
             $_UPPER_BOUND = last.(Base.front($_RANGE_SYMBOL))   
             $_LAST_DIM = ($_RANGE_SYMBOL)[end]      
-            $_RANGE_SYMBOL = $_UPPER_BOUND .- $_LOWER_BOUND .+ 2         
+            $_RANGE_SYMBOL = $_UPPER_BOUND .- $_LOWER_BOUND #.+ 2         
             
+            # println($_LOWER_BOUND)
+            # println($_UPPER_BOUND)
+            # println($_LAST_DIM)
+            # println($_RANGE_SYMBOL)
+            # println($_BLOCK_SYMBOL)
             $(call_block.args...)
         end
     end

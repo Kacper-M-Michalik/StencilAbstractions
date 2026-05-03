@@ -22,27 +22,25 @@ function StencilAbstractions.generate_graph_loop(func, count, backend::CUDABacke
     return esc(quote
         $base_iters = ($count)
         $iters = div($base_iters, $unroll_count)
-        $rem_iters = rem($base_iters, $unroll_count)
-        if ($base_iters > 0)
-            if ($iters > 0)
-                $graph = CUDA.capture() do
-                    $unrolled_func
-                end         
-                $exec_graph = CUDA.instantiate($graph)
-                for $index in 1:$iters
-                    CUDA.launch($exec_graph)
-                end
-            end            
-            if ($rem_iters > 0)
-                $graph = CUDA.capture() do
-                    $func
-                end         
-                $exec_graph = CUDA.instantiate($graph)
-                for $index in 1:rem($base_iters, $unroll_count)
-                    CUDA.launch($exec_graph)    
-                end        
+        $rem_iters = rem($base_iters, $unroll_count)        
+        if ($iters > 0)
+            $graph = CUDA.capture() do
+                $unrolled_func
+            end         
+            $exec_graph = CUDA.instantiate($graph)
+            for $index in 1:$iters
+                CUDA.launch($exec_graph)
             end
-        end        
+        end            
+        if ($rem_iters > 0)
+            $graph = CUDA.capture() do
+                $func
+            end         
+            $exec_graph = CUDA.instantiate($graph)
+            for $index in 1:$rem_iters
+                CUDA.launch($exec_graph)    
+            end        
+        end                
     end)
 end
 

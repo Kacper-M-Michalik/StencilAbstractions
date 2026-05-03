@@ -22,26 +22,24 @@ function StencilAbstractions.generate_graph_loop(func, count, backend::ROCBacken
         $base_iters = ($count)
         $iters = div($base_iters, $unroll_count)
         $rem_iters = rem($base_iters, $unroll_count)
-        if ($base_iters > 0)
-            if ($iters > 0)
-                $graph = AMDGPU.capture() do
-                    $unrolled_func
-                end         
-                $exec_graph = AMDGPU.instantiate($graph)
-                for $index in 1:$iters
-                    AMDGPU.launch($exec_graph)
-                end
+        if ($iters > 0)
+            $graph = AMDGPU.capture() do
+                $unrolled_func
+            end         
+            $exec_graph = AMDGPU.instantiate($graph)
+            for $index in 1:$iters
+                AMDGPU.launch($exec_graph)
             end
-            if ($rem_iters > 0)
-                $graph = AMDGPU.capture() do
-                    $func
-                end         
-                $exec_graph = AMDGPU.instantiate($graph)
-                for $index in 1:rem($base_iters, $unroll_count)
-                    AMDGPU.launch($exec_graph)           
-                end        
-            end
-        end        
+        end
+        if ($rem_iters > 0)
+            $graph = AMDGPU.capture() do
+                $func
+            end         
+            $exec_graph = AMDGPU.instantiate($graph)
+            for $index in 1:$rem_iters
+                AMDGPU.launch($exec_graph)           
+            end        
+        end                
     end)
 end
 

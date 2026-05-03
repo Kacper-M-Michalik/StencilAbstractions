@@ -130,7 +130,7 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, Ke
     end    
 
     generated_kernel = quote        
-        function $kernel_name($(kernel_args...))           
+        function $kernel_name($(kernel_args...))
             $loop
         end
     end

@@ -235,16 +235,6 @@ macro compile_stencil(vars...)
         spec = StencilSpecification(name, equation, structure, boundary, backend, settings)
         result = internal_compile_stencil(spec)
 
-        if (false)
-            println(quote
-                $(result.kernel)
-
-                $(result.caller)
-                
-                const $name = StencilAbstractions.CompiledStencil{typeof($(result.caller_name)), $(spec.stencil.dimensions), typeof($(spec))}($(result.caller_name), $(spec))
-            end)
-        end
-
         return esc(quote
             $(result.kernel)
 

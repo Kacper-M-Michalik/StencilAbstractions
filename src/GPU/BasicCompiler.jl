@@ -155,7 +155,7 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
 
             $_LOWER_BOUND = first.($_RANGE_SYMBOL) .- 1
             $_UPPER_BOUND = last.($_RANGE_SYMBOL)          
-            $_RANGE_SYMBOL = $_UPPER_BOUND .- $_LOWER_BOUND .+ 2            
+            $_RANGE_SYMBOL = $_UPPER_BOUND .- $_LOWER_BOUND #.+ 2            
 
             $(call_block.args...)
         end
