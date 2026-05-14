@@ -1,8 +1,8 @@
 module StencilAbstractionsCUDAExt
 
-using StencilAbstractions
 using CUDA
-using CUDA.CUDAKernels
+using KernelAbstractions
+using StencilAbstractions
 
 function StencilAbstractions.generate_graph_loop(func, count, backend::CUDABackend, unroll_count)
     unrolled_func = Expr(:block)

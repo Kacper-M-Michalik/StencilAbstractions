@@ -65,12 +65,14 @@ Base.@kwdef struct SpatialSettings{N, M, W <: ProcessMode, T <: ThreadingMode} <
 end
 
 Base.@kwdef struct OverlappedSettings{N} <: ComputationSettings
+    swap::Vector{Tuple{Symbol, Symbol}}
+
     enable_fastmath::Bool = false
     enable_bounds_checks::Bool = false    
 
-    elements_per_thread::Int = 0
+    elements_per_thread::Int = 1
     block_size::NTuple{N, Int} = ()
-    timesteps::Int = 0
+    timesteps::Int = 2
 end
 
 
@@ -122,43 +124,33 @@ struct CompiledStencil{K, N, Specs <: StencilSpecification}
     settings::Specs
 end
 
-@inline function (stencil::CompiledStencil{K, N})(args::Vararg{Any, M}; 
+@inline function (stencil::CompiledStencil{K, N})(@specialize(args...);
     range::Union{NTuple{N, UnitRange{Int}}, Nothing} = nothing, 
-    block_size::Union{NTuple{N, Int}, Nothing} = nothing, 
+    tile_size::Union{NTuple{N, Int}, Nothing} = nothing,
+    block_size = nothing, 
     mask::Union{ExecutionMask, Nothing} = nothing
-    ) where {K, N, M}
-    stencil.kernel(args..., range, block_size, mask)
+    ) where {K, N}
+    stencil.kernel(args..., range, tile_size, block_size, mask)
 end
 
-# @inline function (stencil::CompiledStencil{K, N, Specs})(args...; 
-#     range = nothing, 
-#     block_size = nothing, 
-#     mask = nothing
-#     ) where {K, N, Specs}
-
-#     # actual_range = range === nothing ? ntuple(Returns(0:0), Val(N)) : range
-#     # actual_block_size = block_size === nothing ? ntuple(Returns(0), Val(N)) : block_size
-#     stencil.kernel(args..., range, block_size, mask)
-# end
 
 struct StencilCollection
     specifications::Array{StencilSpecification}
 end
 StencilCollection(args...) = StencilCollection(Array{StencilSpecification}(args...))
 
-const _SIZE_SYMBOL = Symbol("_RANGE")
-
 const _GRID_TYPE = Symbol("Grid")
 
-const _CURSOR = Symbol("_CURSOR")
-const _UPPER_BOUND = Symbol("_UPPER")
-const _LOWER_BOUND = Symbol("_LOWER")
-const _LAST_DIM = Symbol("_LAST_DIM")
-const _ITER_SYMBOL = Symbol("_ITER")
+const _CURSOR = gensym(Symbol("_CURSOR"))
+const _UPPER_BOUND = gensym(Symbol("_UPPER"))
+const _LOWER_BOUND = gensym(Symbol("_LOWER"))
+const _LAST_DIM = gensym(Symbol("_LAST_DIM"))
+const _ITER_SYMBOL = gensym(Symbol("_ITER"))
 
-const _RANGE_SYMBOL = Symbol("_RANGE")
-const _BLOCK_SYMBOL = Symbol("_BLOCK")
-const _MASK_SYMBOL = Symbol("_MASK")
+const _RANGE_SYMBOL = gensym(Symbol("_RANGE"))
+const _TILE_SYMBOL = gensym(Symbol("_TILE"))
+const _BLOCK_SYMBOL = gensym(Symbol("_BLOCK"))
+const _MASK_SYMBOL = gensym(Symbol("_MASK"))
 
 const inplace_operators = Set{Symbol}([:(+=), :(-=), :(*=), :(/=), :(\=), :(÷=), :(//=), :(^=), :(%=), :(&=), :(|=), :(⊻=), :(<<=), :(>>>=), :(>>=)])
 const blocked_keywords = Set{Symbol}([:baremodule, :begin, :catch, :const, :do, :export, :finally, :function, :global, :import, :let, :macro, :module, :quote, :return, :struct, :try, :using])

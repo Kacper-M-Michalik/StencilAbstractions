@@ -1,9 +1,8 @@
 function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, KernelAbstractions.CPU, S}) where {B, S <: SpatialSettings}
 
     # Generate hygenic symbols for kernel function name, etc.
-    kernel_name = gensym(Symbol(spec.stencil.name, "!"))
-    caller_name = gensym(Symbol(kernel_name, "_caller"))   
-    # Symbol(spec.stencil.name, "!") #
+    kernel_name = gensym(Symbol(spec.stencil.name))
+    caller_name = Symbol(kernel_name, "_caller") 
 
     # Process args
     caller_args = Any[]
@@ -31,7 +30,7 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, Ke
 
     setup_caller_args!(spec, caller_args)
     push!(kernel_args, :($(_RANGE_SYMBOL)::NTuple{$(spec.stencil.dimensions), Int}))
-    push!(kernel_args, :($(_BLOCK_SYMBOL)::NTuple{$(spec.stencil.dimensions), Int}))
+    push!(kernel_args, :($(_TILE_SYMBOL)::NTuple{$(spec.stencil.dimensions), Int}))
     push!(kernel_args, :($(_LOWER_BOUND)::NTuple{$(spec.stencil.dimensions), Int}))
     push!(kernel_args, :($(_UPPER_BOUND)::NTuple{$(spec.stencil.dimensions), Int}))
 
@@ -79,8 +78,8 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, Ke
         test = :((sum(($_CURSOR).I) % 2) == $(_ITER_SYMBOL))
         body = Expr(:if, test, body)      
         
-        push!(call_block.args, :($(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), $(_BLOCK_SYMBOL), $(_LOWER_BOUND), $(_UPPER_BOUND), 0)))
-        push!(call_block.args, :($(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), $(_BLOCK_SYMBOL), $(_LOWER_BOUND), $(_UPPER_BOUND), 1)))
+        push!(call_block.args, :($(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), $(_TILE_SYMBOL), $(_LOWER_BOUND), $(_UPPER_BOUND), 0)))
+        push!(call_block.args, :($(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), $(_TILE_SYMBOL), $(_LOWER_BOUND), $(_UPPER_BOUND), 1)))
 
         push!(kernel_args, _ITER_SYMBOL)
     elseif (spec.settings.processing isa MultiColour)
@@ -88,15 +87,15 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, Ke
         body = Expr(:if, test, body)     
 
         call_block = quote
-            for iter in 1:mask.colours
-                $(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), $(_BLOCK_SYMBOL), $(_LOWER_BOUND), $(_UPPER_BOUND), $(_ITER_SYMBOL), (($(_MASK_SYMBOL))).mask)
+            for $_ITER_SYMBOL in 1:($_MASK_SYMBOL).colours
+                $(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), $(_TILE_SYMBOL), $(_LOWER_BOUND), $(_UPPER_BOUND), $(_ITER_SYMBOL), (($(_MASK_SYMBOL))).mask)
             end
         end        
 
         push!(kernel_args, _ITER_SYMBOL)
         push!(kernel_args, _MASK_SYMBOL)
     else
-        push!(call_block.args, :($(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), $(_BLOCK_SYMBOL), $(_LOWER_BOUND), $(_UPPER_BOUND))))
+        push!(call_block.args, :($(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), $(_TILE_SYMBOL), $(_LOWER_BOUND), $(_UPPER_BOUND))))
     end
 
     # Generate iteration domain calculations  
@@ -122,8 +121,8 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, Ke
     end    
 
     tile_body = quote
-        $(base_loc) = CartesianIndex(($(tile_id).I .- 1) .* $_BLOCK_SYMBOL .+ $_LOWER_BOUND)
-        $(upper_loc) = CartesianIndex(min.($(base_loc).I .+ $_BLOCK_SYMBOL .- 1, $_UPPER_BOUND))        
+        $(base_loc) = CartesianIndex(($(tile_id).I .- 1) .* $_TILE_SYMBOL .+ $_LOWER_BOUND)
+        $(upper_loc) = CartesianIndex(min.($(base_loc).I .+ $_TILE_SYMBOL .- 1, $_UPPER_BOUND))        
         $(loop)
     end
     tile_iterator = :($tile_id = CartesianIndices($_RANGE_SYMBOL))
@@ -155,7 +154,7 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, Ke
         end
     else
         range_block = quote
-            $_RANGE_SYMBOL = axes($(spec.stencil.ordered_grids[1]))
+            $_RANGE_SYMBOL = UnitRange.(axes($(spec.stencil.ordered_grids[1])))
         end
     end
 
@@ -164,13 +163,13 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, Ke
             if (($_RANGE_SYMBOL) === nothing)
                 $(range_block.args...)
             end
-            if (($_BLOCK_SYMBOL) === nothing)
-                $_BLOCK_SYMBOL = $(spec.settings.default_tile_size)
+            if (($_TILE_SYMBOL) === nothing)
+                $_TILE_SYMBOL = $(spec.settings.default_tile_size)
             end
 
             $_LOWER_BOUND = first.($_RANGE_SYMBOL)
             $_UPPER_BOUND = last.($_RANGE_SYMBOL)          
-            $_RANGE_SYMBOL = cld.($_UPPER_BOUND .- $_LOWER_BOUND .+ 1, $_BLOCK_SYMBOL)
+            $_RANGE_SYMBOL = cld.($_UPPER_BOUND .- $_LOWER_BOUND .+ 1, $_TILE_SYMBOL)
 
             $(call_block.args...)
         end

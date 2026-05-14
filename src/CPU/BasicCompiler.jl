@@ -1,12 +1,10 @@
 function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, KernelAbstractions.CPU, S}) where {B, S <: BasicSettings}
 
     # Generate hygenic symbols for kernel function name, etc.
-    kernel_name = gensym(Symbol(spec.stencil.name, "!"))
-    caller_name = gensym(Symbol(kernel_name, "_caller"))   
+    kernel_name = gensym(Symbol(spec.stencil.name))
+    caller_name = Symbol(kernel_name, "_caller")   
 
     # Process args
-    tuple_args = Any[]
-
     caller_args = Any[]
     stencil_args = Any[]
     kernel_args = Any[]
@@ -18,26 +16,23 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, Ke
             end
             push!(caller_args, Expr(:(::), arg[1], :(Array{$type, $(spec.stencil.dimensions)})))    
             push!(kernel_args, Expr(:(::), arg[1], :(Array{$type, $(spec.stencil.dimensions)})))       
-            push!(tuple_args, :(Array{$type, $(spec.stencil.dimensions)}))
+            # push!(tuple_args, :(Array{$type, $(spec.stencil.dimensions)}))
         else
             if (arg[2] !== nothing)
                 push!(caller_args, Expr(:(::), arg[1], arg[2]))
                 push!(kernel_args, Expr(:(::), arg[1], arg[2]))
-                push!(tuple_args, arg[2])
+                # push!(tuple_args, arg[2])
             else
                 push!(caller_args, arg[1])            
                 push!(kernel_args, arg[1])            
-                push!(tuple_args, :(<:Any))
+                # push!(tuple_args, :(<:Any))
             end
         end
         push!(stencil_args, arg[1])
     end
 
-    # push!(tuple_args, :(NTuple{$(spec.stencil.dimensions), UnitRange{Int}}))
-    # push!(tuple_args, :(NTuple{$(spec.stencil.dimensions), Int}))
-    # push!(tuple_args, :(Union{ExecutionMask, Nothing}))
     setup_caller_args!(spec, caller_args)
-    push!(kernel_args, :($(_RANGE_SYMBOL)::NTuple{$(spec.stencil.dimensions), UnitRange{Int}}))
+    push!(kernel_args, :($(_RANGE_SYMBOL)::NTuple{$(spec.stencil.dimensions), AbstractUnitRange{Int}}))
 
     # Check/get valid boundaries
     boundaries = get_boundaries(spec)
@@ -92,8 +87,8 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, Ke
         body = Expr(:block, Expr(:if, test, body))     
 
         call_block = quote
-            for iter in 1:mask.colours
-                $(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), $(_ITER_SYMBOL), (($(_MASK_SYMBOL))).mask)
+            for $_ITER_SYMBOL in 1:($_MASK_SYMBOL).colours
+                $(kernel_name)($(stencil_args...), $(_RANGE_SYMBOL), $(_ITER_SYMBOL), ($_MASK_SYMBOL).mask)
             end
         end        
 
@@ -147,7 +142,7 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, Ke
         end
     else
         range_block = quote
-            $_RANGE_SYMBOL = axes($(spec.stencil.ordered_grids[1]))
+            $_RANGE_SYMBOL = UnitRange.(axes($(spec.stencil.ordered_grids[1])))
         end
     end
 

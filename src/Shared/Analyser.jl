@@ -1,4 +1,3 @@
-
 function inline_body(mod::Module, node)
     if (node isa Symbol)
         #if (isdefined(mod, node) && isconst(mod, node) && isbits(getfield(mod, node))) return getfield(mod, node) end
@@ -42,21 +41,29 @@ end
 function process_args(signature)
     stencil_args = Tuple{Symbol, Union{Symbol, Nothing}}[]    
     grids = Symbol[]    
+    dimensions = 0
 
     # Verify function args are all symbols
     for (i, arg) in enumerate(signature.args[2:end])
         if (arg isa Expr && arg.head === :(::))
             @assert length(arg.args) == 2
+            
             # Type annotation with curly for type specialisation
             if (arg.args[2] isa Expr)
-                base_type = arg.args[2].args[1]
-                if (base_type == _GRID_TYPE)
-                    @assert length(arg.args[2].args) == 2
+                curly = arg.args[2]
+                if (curly.args[1] == _GRID_TYPE)
+                    if (length(curly.args) != 2 && length(curly.args) != 3)
+                        error("Invalid Grid typing!")
+                    end
+                    if (length(curly.args) == 3)
+                        dimensions = curly.args[3]
+                    end
+                    type = curly.args[2]
+
                     push!(grids, arg.args[1])
-                    # Get only field type symbol not whole expr
-                    push!(stencil_args, (arg.args[1], arg.args[2].args[2]))
+                    push!(stencil_args, (arg.args[1], type))
                 else               
-                    push!(stencil_args, (arg.args[1], arg.args[2]))
+                    push!(stencil_args, (arg.args[1], curly))
                 end
             else
             # Just regular type annotation
@@ -74,7 +81,7 @@ function process_args(signature)
         end
     end
 
-    return stencil_args, grids
+    return stencil_args, grids, dimensions
 end
 
 function process_stencil_definition(equation::Expr, mod::Module, line, file)
@@ -89,7 +96,7 @@ function process_stencil_definition(equation::Expr, mod::Module, line, file)
     end
 
     # Process function signature
-    stencil_args, grids = process_args(equation.args[1])
+    stencil_args, grids, dimensions = process_args(equation.args[1])
 
     # Expand macros and inline consts to allow for proper parsing of body    
     body = macroexpand(mod, body; recursive=true)
@@ -105,7 +112,6 @@ function process_stencil_definition(equation::Expr, mod::Module, line, file)
     input_grids = Set{Symbol}()
     output_grids = Set{Symbol}()    
     sources = Dict{Symbol, StencilSource}()
-    dimensions = 0
     unsafe_stencil = false
     inplace_stencil = false
 
@@ -129,12 +135,13 @@ function process_stencil_definition(equation::Expr, mod::Module, line, file)
                 if (current.head === :(=))
                     push!(output_grids, lhs)
                 else
-                    push!(input_grids, lhs)
-                    push!(output_grids, lhs)
+                    error("Only assignment (=) is allowed to write to a grid!")
                 end
-            elseif (lhs isa Expr && lhs.head === :ref)
-                error("Cannot write to an array at an index!")
+            elseif (lhs isa Expr && lhs.head === :ref && in(lhs.args[1], grids_lookup))
+                error("Cannot write to a grid using an index!")
                 #@assert (!(lhs.args[1] isa Symbol) || !(in(lhs.args[1], grids))) "Cannot index into a grid assignment, to write to a grid only use its variable name!"
+            elseif (lhs isa Expr)
+                push!(exprs, lhs)
             end
 
             if (rhs isa Expr) push!(exprs, rhs) end        
@@ -146,13 +153,8 @@ function process_stencil_definition(equation::Expr, mod::Module, line, file)
 
             @assert length(indices) > 0 "Stencil array indices cannot be empty!"
             for index in indices
-                if !(index isa Int) 
-                    error("")
-                    println("Error in stencil def: ")
-                    print(stencil_name)
-                    println(equation)
-                    dump(index)
-                    println() 
+                if !(index isa Int)                     
+                    println("Error in stencil def ($stencil_name) found $(typeof(index)) instead of Int!")
                 end
                 @assert index isa Int "Stencil array indices must be integer constants!"
             end            
@@ -202,6 +204,10 @@ function process_stencil_definition(equation::Expr, mod::Module, line, file)
                 unsafe_stencil = true
             end
         end
+    end
+
+    if (dimensions == 0)
+        error("Stencil has no detected dimensionality, indicate one through typing a field or an access!")
     end
 
     return StencilEquation(stencil_name, stencil_args, grids, collect(input_grids), collect(output_grids), body, sources, dimensions, inplace_stencil, unsafe_stencil, contains_annotations)

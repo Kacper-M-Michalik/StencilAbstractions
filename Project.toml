@@ -1,7 +1,7 @@
 name = "StencilAbstractions"
 uuid = "f78e58d0-a86d-473a-8ba8-1812b7e1db75"
 version = "0.1.0"
-authors = ["BGN: TODO"]
+authors = ["BGN: 1477B"]
 
 [deps]
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"

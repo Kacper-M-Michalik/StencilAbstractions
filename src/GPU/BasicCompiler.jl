@@ -5,8 +5,8 @@
 function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D, S}) where {B, D <: KernelAbstractions.GPU, S <: BasicSettings}
 
     # Generate hygenic symbols for kernel function name, etc.
-    kernel_name = gensym(Symbol(spec.stencil.name, "!"))
-    caller_name = gensym(Symbol(kernel_name, "_caller"))   
+    kernel_name = gensym(Symbol(spec.stencil.name))
+    caller_name = Symbol(kernel_name, "_caller")   
 
     # Process args   
     caller_args = Any[]
@@ -18,13 +18,12 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
             if (type === nothing)                
                 type = :(<:Any)
             end
-            push!(caller_args, Expr(:(::), arg[1], :(CuArray{$type, $(spec.stencil.dimensions)})))      
+            push!(caller_args, Expr(:(::), arg[1], :(AbstractArray{$type, $(spec.stencil.dimensions)})))      
 
             if (in(arg[1], spec.stencil.input_symbols) && !in(arg[1], spec.stencil.output_symbols))      
                 push!(kernel_args, Expr(:macrocall, Symbol("@Const"), nothing, arg[1]))
             else               
-                push!(kernel_args, arg[1])# Expr(:(::), arg[1], :(AbstractArray{$type, $(spec.stencil.dimensions)})))     
-                #push!(kernel_args, Expr(:(::), arg[1], :(CuArray{$type, $(spec.stencil.dimensions)})))     
+                push!(kernel_args, arg[1])   
             end        
         else
             if (arg[2] !== nothing)
@@ -39,8 +38,6 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
     end
 
     setup_caller_args!(spec, caller_args)    
-    # push!(kernel_args, _LOWER_BOUND)
-    # push!(kernel_args, _UPPER_BOUND)
     push!(kernel_args, :($(_LOWER_BOUND)::NTuple{$(spec.stencil.dimensions), Int}))
     push!(kernel_args, :($(_UPPER_BOUND)::NTuple{$(spec.stencil.dimensions), Int}))
 
@@ -97,8 +94,8 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
         body = Expr(:if, test, body)     
 
         call_block = quote
-            for iter in 1:mask.colours
-                $(kernel_name)($(spec.device), $_BLOCK_SYMBOL)($(stencil_args...), $(_LOWER_BOUND), $(_UPPER_BOUND), $(_ITER_SYMBOL), (($(_MASK_SYMBOL))).mask; ndrange=$_RANGE_SYMBOL)
+            for $_ITER_SYMBOL in 1:($_MASK_SYMBOL).colours
+                $(kernel_name)($(spec.device), $_BLOCK_SYMBOL)($(stencil_args...), $(_LOWER_BOUND), $(_UPPER_BOUND), $(_ITER_SYMBOL), ($_MASK_SYMBOL).mask; ndrange=$_RANGE_SYMBOL)
             end
         end        
 
@@ -140,7 +137,7 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
         end
     else
         range_block = quote
-            $_RANGE_SYMBOL = axes($(spec.stencil.ordered_grids[1]))
+            $_RANGE_SYMBOL = UnitRange.(axes($(spec.stencil.ordered_grids[1])))
         end
     end
 

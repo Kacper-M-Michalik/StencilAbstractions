@@ -91,14 +91,13 @@ function alloc(spec::StencilSpecification{<:Any, <:ArrayBacking, <:Any, <:Any}, 
         true_size = Tuple(temp)
         lower_corner = Tuple(offset)      
         upper_corner = lower_corner .+ arr_size .- 1     
-        ranges = UnitRange.(Tuple(lower_corner), upper_corner) 
-      
+
+        ranges = UnitRange.(Tuple(lower_corner), upper_corner)       
         device_array = KernelAbstractions.allocate(spec.device, type, true_size) 
-        # data = view(device_array, ranges...)
         return device_array, ranges
     else
         device_array = KernelAbstractions.allocate(spec.device, type, arr_size) 
-        return device_array, axes(device_array) # view(device_array, axes(device_array)...)
+        return device_array, axes(device_array)
     end
 end
 
@@ -127,10 +126,33 @@ function alloc(spec::StencilSpecification{<:Any, <:ArrayBacking, <:Any, <:Any}, 
     else
         device_array = KernelAbstractions.allocate(spec.device, eltype(array), arr_size)
         copyto!(device_array, array)
-        return device_array, axes(device_array) # view(device_array, axes(device_array)...)
+        return device_array, axes(device_array)
     end
+end
 
-    return device_array
+function alloc(spec::StencilSpecification{<:Any, <:ArrayBacking, <:Any, <:OverlappedSettings}, array::AbstractArray)    
+    arr_size = size(array)
+    @assert length(arr_size) == spec.stencil.dimensions    
+    @assert spec.boundary[1] isa Halo    
+
+    shared_size, logical_size, lower_valid, upper_valid, _ = get_tile_properties(spec)
+
+    halos = GetMaximalHaloSizes(spec)
+    temp = Vector{Int}(undef, length(arr_size))
+    offset = Vector{Int}(undef, length(arr_size))
+    for (i, radius) in enumerate(halos)
+        temp[i] = cld(arr_size[i], logical_size[i]) * logical_size[i] + shared_size[i] - upper_valid[i] + lower_valid[i] - 1
+        offset[i] = -radius.min + lower_valid[i]
+    end
+    true_size = Tuple(temp)
+    lower_corner = Tuple(offset)      
+    upper_corner = lower_corner .+ arr_size .- 1     
+    ranges = UnitRange.(lower_corner, upper_corner) 
+
+    device_array = KernelAbstractions.zeros(spec.device, eltype(array), true_size)
+    dest = view(device_array, ranges...)
+    copyto!(dest, array)       
+    return device_array, ranges 
 end
 
 function Base.zeros(spec::StencilSpecification{<:Any, <:ArrayBacking, <:Any, <:Any}, type, arr_size) 
@@ -148,79 +170,51 @@ function Base.zeros(spec::StencilSpecification{<:Any, <:ArrayBacking, <:Any, <:A
         true_size = Tuple(temp)
         lower_corner = Tuple(offset)      
         upper_corner = lower_corner .+ arr_size .- 1     
-        ranges = UnitRange.(Tuple(lower_corner), upper_corner) 
-      
+
+        ranges = UnitRange.(Tuple(lower_corner), upper_corner)       
         device_array = KernelAbstractions.zeros(spec.device, type, true_size) 
-        # data = view(device_array, ranges...)
         return device_array, ranges
     else
         device_array = KernelAbstractions.zeros(spec.device, type, arr_size) 
-        return device_array, axes(device_array) #view(device_array,...)
+        return device_array, axes(device_array)
     end
 end
 
-# function (stencil::CompiledStencil{K, N})(args...; 
-#     range::NTuple{N, UnitRange{Int}} = ntuple(i->(0:0), Val(N)), 
-#     block_size::NTuple{N, Int} = ntuple(i->0, Val(N)), 
-#     mask::Union{ExecutionMask, Nothing} = nothing
-#     ) where {K, N}
-    
-#     #println("callable body")
-#     stencil.kernel(args..., range, block_size, mask)
-# end
-# function (stencil::CompiledStencil{K, N})(args...; 
-#     range::NTuple{N, UnitRange{Int}} = ntuple(i->(0:0), Val(N)), 
-#     block_size::NTuple{N, Int} = ntuple(i->0, Val(N)), 
-#     mask::Union{ExecutionMask, Nothing} = nothing
-#     ) where {K, N}
-    
-#     stencil.kernel(args, range, block_size, mask)
-# end
+function Base.zeros(spec::StencilSpecification{<:Any, <:ArrayBacking, <:Any, <:OverlappedSettings}, type, arr_size) 
+    @assert length(arr_size) == spec.stencil.dimensions    
+    @assert spec.boundary[1] isa Halo  
 
-function generate_graph_loop(func, count, backend, unroll_count)
-    error("Unknown Backend for graph loop!")
+    shared_size, logical_size, lower_valid, upper_valid, _ = get_tile_properties(spec)
+
+    halos = GetMaximalHaloSizes(spec)
+    temp = Vector{Int}(undef, length(arr_size))
+    offset = Vector{Int}(undef, length(arr_size))
+    for (i, radius) in enumerate(halos)
+        temp[i] = cld(arr_size[i], logical_size[i]) * logical_size[i] + shared_size[i] - upper_valid[i] + lower_valid[i] - 1
+        offset[i] = -radius.min + lower_valid[i]
+    end
+    true_size = Tuple(temp)
+    lower_corner = Tuple(offset)      
+    upper_corner = lower_corner .+ arr_size .- 1     
+
+    ranges = UnitRange.(Tuple(lower_corner), upper_corner)       
+    device_array = KernelAbstractions.zeros(spec.device, type, true_size) 
+    return device_array, ranges    
 end
 
 macro compile_stencil(vars...)
     if (length(vars) == 5 || length(vars) == 6)      
-
-        # local target_module
-        # local target_symbol 
-        # if (vars[2] isa Expr)
-        #     target = vars[2]
-        #     @assert target.head === :(.)
-        #     @assert target.args[2] isa QuoteNode
-        #     try
-        #         target_module = Core.eval(__module__, target.args[1])
-        #     catch
-        #         error("Unknown module in @compile_stencil line $(__source__.line) in $(__source__.file)")
-        #     end
-        #     target_symbol = target.args[2].value           
-        # elseif (vars[2] isa Symbol)
-        #     target_module = __module__
-        #     target_symbol = vars[2]
-        # else
-        #     error("Could not parse stencil function reference")
-        # end           
-        # obj_names = names(target_module, all=true)
-        # for name in obj_names
-        #     println(name)
-        #     if (name === target_symbol && isdefined(target_module, name) && getfield(target_module, name) isa Function)
-        #         found_stencil = true
-        #         break
-        #     end
-        # end
-            # equation = Core.eval(target_module, :(get_stencil(Val($(QuoteNode(target_symbol)))))) 
-
         local equation
         try
             equation = Core.eval(__module__, vars[2])    
-            if !(equation isa StencilEquation)
-                error()
-            end
+           
         catch
             error("Could not find/retreive stencil definition on $(__source__.line) in $(__source__.file)")
         end          
+
+        if !(equation isa StencilEquation)
+            error("Stencil argument ($(vars[2])) does not point to @stencil function")
+        end
 
         name = vars[1]
         structure = Core.eval(__module__, vars[3])
@@ -240,7 +234,6 @@ macro compile_stencil(vars...)
 
             $(result.caller)
 
-            #const $(vars[1]) = StencilAbstractions.CompiledStencil{typeof($(result.caller_name))}($(result.caller_name))
             const $name = StencilAbstractions.CompiledStencil{typeof($(result.caller_name)), $(spec.stencil.dimensions), typeof($(spec))}($(result.caller_name), $(spec))
         end)       
     else

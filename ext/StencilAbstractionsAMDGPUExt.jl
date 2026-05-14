@@ -1,7 +1,8 @@
 module StencilAbstractionsAMDGPUExt
 
-using StencilAbstractions
 using AMDGPU
+using KernelAbstractions
+using StencilAbstractions
 
 function StencilAbstractions.generate_graph_loop(func, count, backend::ROCBackend, unroll_count)
     unrolled_func = Expr(:block)

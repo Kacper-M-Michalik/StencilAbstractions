@@ -1,4 +1,4 @@
-function generate_graph_loop(func, count, backend::CPUBackend, unroll_count)
+function generate_graph_loop(func, count, backend, unroll_count)
     unrolled_func = Expr(:block)
     for i in 1:unroll_count
         for call in func.args
@@ -8,8 +8,6 @@ function generate_graph_loop(func, count, backend::CPUBackend, unroll_count)
 
     base_iters = gensym(Symbol("base_iters"))
     iters = gensym(Symbol("iters"))
-    graph = gensym(Symbol("graph"))
-    exec_graph = gensym(Symbol("exec"))
     index = gensym(Symbol("i"))
 
     return esc(quote

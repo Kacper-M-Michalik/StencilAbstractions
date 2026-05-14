@@ -5,9 +5,8 @@
 function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D, S}) where {B, D <: KernelAbstractions.GPU, S <: SpatialSettings}
 
     # Generate hygenic symbols for kernel function name, etc.
-    name = gensym(spec.name)
-    kernel_name = Symbol(name, "_kernel")
-    caller_name = Symbol(name, "_caller")
+    kernel_name = gensym(Symbol(spec.stencil.name))
+    caller_name = Symbol(kernel_name, "_caller")   
     #specialised_kernel = Symbol(name, "_spc")
     #block_size = spec.settings.default_block_size
 
@@ -101,8 +100,8 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
         body = Expr(:if, test, body)     
 
         call_block = quote
-            for iter in 1:mask.colours
-                $(kernel_name)($(spec.device), $_BLOCK_SYMBOL)($(stencil_args...), $_LOWER_BOUND, $_UPPER_BOUND, $_LAST_DIM, $_ITER_SYMBOL, (($(_MASK_SYMBOL))).mask; ndrange=$_RANGE_SYMBOL)
+            for $_ITER_SYMBOL in 1:(_MASK_SYMBOL).colours
+                $(kernel_name)($(spec.device), $_BLOCK_SYMBOL)($(stencil_args...), $_LOWER_BOUND, $_UPPER_BOUND, $_LAST_DIM, $_ITER_SYMBOL, ($_MASK_SYMBOL).mask; ndrange=$_RANGE_SYMBOL)
             end
         end        
 
@@ -150,12 +149,11 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
         end
     else
         range_block = quote
-            $_RANGE_SYMBOL = axes($(spec.stencil.ordered_grids[1]))
+            $_RANGE_SYMBOL = UnitRange.(axes($(spec.stencil.ordered_grids[1])))
         end
     end
 
     kernel_caller = quote
-        #$specialised_kernel = $(kernel_name)($(spec.device), $block_size)
         function $(caller_name)($(caller_args...))        
             if (($_RANGE_SYMBOL) === nothing)
                 $(range_block.args...)
@@ -167,13 +165,8 @@ function internal_compile_stencil(spec::StencilSpecification{B, ArrayBacking, D,
             $_LOWER_BOUND = first.(Base.front($_RANGE_SYMBOL)) .- 1
             $_UPPER_BOUND = last.(Base.front($_RANGE_SYMBOL))   
             $_LAST_DIM = ($_RANGE_SYMBOL)[end]      
-            $_RANGE_SYMBOL = $_UPPER_BOUND .- $_LOWER_BOUND #.+ 2         
+            $_RANGE_SYMBOL = $_UPPER_BOUND .- $_LOWER_BOUND
             
-            # println($_LOWER_BOUND)
-            # println($_UPPER_BOUND)
-            # println($_LAST_DIM)
-            # println($_RANGE_SYMBOL)
-            # println($_BLOCK_SYMBOL)
             $(call_block.args...)
         end
     end

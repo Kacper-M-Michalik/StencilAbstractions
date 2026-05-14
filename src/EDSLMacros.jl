@@ -48,10 +48,14 @@ macro cross(grid, n, r)
         index = zeros(Int, 1, n)
         for offset in (-r):(r)
             index[dim] = offset
-            push!(accesses, Expr(:ref, grid, Tuple(index)))
+            push!(accesses, Expr(:ref, grid, index...))
         end
     end    
     return esc(Expr(:call, :SVector, collect(accesses)...))
+end
+
+macro cursor()
+    return esc(_CURSOR)
 end
 
 macro stencil(equation)    
@@ -59,6 +63,5 @@ macro stencil(equation)
 
     return esc(quote    
         const $(stencil.name) = $stencil
-        # get_stencil(::Val{$(QuoteNode(stencil.name))}) = $stencil
     end)
 end
