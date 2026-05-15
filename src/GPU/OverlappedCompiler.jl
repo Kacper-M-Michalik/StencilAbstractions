@@ -2,6 +2,7 @@ function max_time(source, block_size)
     max_timesteps = typemax(Int) 
     for (i, radius) in enumerate(source.radii)
         bounds = -radius.min + radius.max
+        if (bounds < 1) return max_timesteps end
         
         possible = 0
         remaining = block_size[i]

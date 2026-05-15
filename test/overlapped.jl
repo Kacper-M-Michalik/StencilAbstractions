@@ -4,7 +4,6 @@ using CUDA
 using StaticArrays
 using StencilAbstractions
 
-
 @stencil function conway(A::Grid, B::Grid) 
     cnt = (A[-1, -1] + A[-1, 0] + A[-1, 1] + A[0, -1] + A[0, 1] + A[1, -1] + A[1, 0] + A[1, 1])
     if (A[0, 0] == 1)
@@ -20,7 +19,6 @@ end
 
 @compile_stencil(CONWAY, conway, ArrayBacking(), Halo(), CUDABackend(), OverlappedSettings(swap=[(:A, :B)], block_size=(32,8), timesteps=4))
 @compile_stencil(CONWAY_ref, conway, ArrayBacking(), Halo(), CUDABackend(), BasicSettings(default_block_size=(32,8)))
-
 
 test_size = (4,4)
 init = Int32.(rand(Bool, test_size))
@@ -133,15 +131,6 @@ CONWAY(in, out; range=range)
 # caller(in, out, range)
 
 KernelAbstractions.synchronize(CUDABackend())
-# @stencil function box_blur_copy(A::Grid, B::Grid)
-#     B = sum(@Box(A, 2, 1)) / 9.0
-# end
-# @compile_stencil(CONWAY, box_blur_copy, CartesianGrid(), DefaultValue{Int32}(0), CPUBackend(), SpatialSettings())
-# init = Float32.(rand(Bool, (10, 10)))
-# in, _ = alloc(CONWAY.settings, init) 
-# out, _ = zeros(CONWAY.settings, eltype(init), size(init))
-# CONWAY(in, out)
-# println(in)
 println("run done")
 
 eql = out[range...] == in2[r...]

@@ -206,8 +206,7 @@ macro compile_stencil(vars...)
     if (length(vars) == 5 || length(vars) == 6)      
         local equation
         try
-            equation = Core.eval(__module__, vars[2])    
-           
+            equation = Core.eval(__module__, vars[2])               
         catch
             error("Could not find/retreive stencil definition on $(__source__.line) in $(__source__.file)")
         end          
